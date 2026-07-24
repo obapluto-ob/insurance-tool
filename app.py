@@ -35,7 +35,7 @@ def _load_saved_settings():
 
 _load_saved_settings()
 
-task_status = {"message": "Ready.", "running": False}
+task_status = {"message": "Ready.", "running": False, "logs": []}
 
 
 # ── Auth ──────────────────────────────────────────────
@@ -70,7 +70,10 @@ def protected(f):
 def run_task(fn, *args):
     def wrapper():
         task_status["running"] = True
-        def cb(msg): task_status["message"] = msg
+        task_status["logs"] = []
+        def cb(msg):
+            task_status["message"] = msg
+            task_status["logs"].append(msg)
         fn(cb, *args)
         task_status["running"] = False
     threading.Thread(target=wrapper, daemon=True).start()
