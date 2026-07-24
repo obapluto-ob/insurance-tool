@@ -38,36 +38,46 @@ def login(page, context, session_cookie, status_callback):
     row = c.fetchone()
     conn.close()
 
-    if row:
-        try:
-            saved_cookies = json.loads(row[0])
-            context.add_cookies(saved_cookies)
-            cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies from last session...")
-        except:
-            pass
-
-    if session_cookie:
-        cb(status_callback, "Also injecting manual session cookie...")
-        for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
-            context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
-
+    # Navigate first so the domain is set, then inject cookies and reload
     page.goto(PORTAL_URL, timeout=30000)
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
     except:
         pass
 
+    if row:
+        try:
+            saved_cookies = json.loads(row[0])
+            context.add_cookies(saved_cookies)
+            cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies. Reloading...")
+            page.reload(timeout=30000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except:
+                pass
+        except:
+            pass
+
+    if session_cookie:
+        cb(status_callback, "Injecting manual session cookie...")
+        for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
+            context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
+        page.reload(timeout=30000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except:
+            pass
+
+    cb(status_callback, f"Cookie check - current URL: {page.url}")
     if "Login" not in page.url and "login" not in page.url:
-        cb(status_callback, f"Logged in via cookie. URL: {page.url}")
+        cb(status_callback, "Logged in via saved session.")
         return True
 
     if session_cookie:
-        all_cookies = context.cookies()
-        cb(status_callback, f"Cookie failed. Site cookies: {[c['name'] for c in all_cookies]}")
-        cb(status_callback, "Cookie expired. Get a fresh one from your browser and update Settings.")
+        cb(status_callback, "Manual session cookie expired. Get a fresh one from Settings.")
         return False
 
-    # Clear expired saved cookies and fall back to password
+    # Saved browser cookies expired — clear and fall back to password
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -171,7 +181,8 @@ def run_scraper(status_callback=None):
         pass
 
     cb(status_callback, "Starting browser...")
-    cb(status_callback, f"Login method: {'Saved session' if has_saved else 'Session Cookie' if session_cookie else 'Username/Password'}")
+    method = 'Saved session' if has_saved else ('Session Cookie' if session_cookie else 'Username/Password')
+    cb(status_callback, f"Login method: {method}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
