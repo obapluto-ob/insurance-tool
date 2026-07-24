@@ -27,108 +27,111 @@ def run_scraper(status_callback=None):
 
     init_db()
 
-    cb(status_callback, f"Starting browser...")
+    # Check for saved session cookie
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='session_cookie'")
+    row = c.fetchone()
+    conn.close()
+    session_cookie = row[0] if row else None
+
+    cb(status_callback, "Starting browser...")
     cb(status_callback, f"Portal URL: {PORTAL_URL}")
     cb(status_callback, f"Username: {USERNAME}")
+    cb(status_callback, f"Login method: {'Session Cookie' if session_cookie else 'Username/Password'}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
             "--no-sandbox", "--disable-dev-shm-usage",
             "--disable-gpu", "--single-process"
         ])
-        page = browser.new_page()
+        context = browser.new_context()
+
+        if session_cookie:
+            cb(status_callback, "Injecting session cookie...")
+            context.add_cookies([{
+                "name": ".AspNet.ApplicationCookie",
+                "value": session_cookie,
+                "domain": "www.planetaltig.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+            }])
+
+        page = context.new_page()
 
         try:
             cb(status_callback, f"Navigating to {PORTAL_URL}...")
             page.goto(PORTAL_URL, timeout=30000)
-            page.wait_for_timeout(2000)
-            cb(status_callback, f"Page title: {page.title()}")
-            cb(status_callback, f"Current URL: {page.url}")
-
-            # Log all inputs found
-            inputs = page.query_selector_all("input")
-            cb(status_callback, f"Found {len(inputs)} input fields on page:")
-            for inp in inputs:
-                t = inp.get_attribute("type") or "text"
-                n = inp.get_attribute("name") or inp.get_attribute("id") or inp.get_attribute("placeholder") or "?"
-                cb(status_callback, f"  - input type={t} name/id={n}")
-
-            # Fill username
-            filled_user = False
-            for selector in ["input[name='Alias']", "input[name='username']", "input[name='email']", "input[type='email']", "input[type='text']"]:
-                try:
-                    page.fill(selector, USERNAME, timeout=3000)
-                    cb(status_callback, f"Filled username using: {selector}")
-                    filled_user = True
-                    break
-                except:
-                    continue
-            if not filled_user:
-                cb(status_callback, "WARNING: Could not fill username field")
-
-            # Fill password
-            filled_pass = False
-            for selector in ["input[name='Password']", "input[name='password']", "input[type='password']"]:
-                try:
-                    page.fill(selector, PASSWORD, timeout=3000)
-                    cb(status_callback, f"Filled password using: {selector}")
-                    filled_pass = True
-                    break
-                except:
-                    continue
-            if not filled_pass:
-                cb(status_callback, "WARNING: Could not fill password field")
-
-            # Submit - try multiple approaches
-            submitted = False
-            for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Sign In')", "button:has-text('Log In')"]:
-                try:
-                    page.click(selector, timeout=3000)
-                    cb(status_callback, f"Clicked submit using: {selector}")
-                    submitted = True
-                    break
-                except:
-                    continue
-            if not submitted:
-                # fallback: press Enter on password field
-                try:
-                    page.press("input[name='Password']", "Enter")
-                    cb(status_callback, "Submitted via Enter key on password field")
-                    submitted = True
-                except:
-                    cb(status_callback, "WARNING: Could not find submit button")
-
-            # Wait for navigation
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except:
                 pass
-            page.wait_for_timeout(3000)
-            cb(status_callback, f"After login - URL: {page.url}")
-            cb(status_callback, f"After login - Title: {page.title()}")
-
-            # Log any error message shown on page
-            page_error = ""
-            for err_sel in [".validation-summary-errors", ".alert", ".error", "[class*='error']", "[class*='alert']", ".text-danger"]:
-                try:
-                    el = page.query_selector(err_sel)
-                    if el:
-                        page_error = el.inner_text().strip()
-                        break
-                except:
-                    pass
+            cb(status_callback, f"Page title: {page.title()}")
+            cb(status_callback, f"Current URL: {page.url}")
 
             if "Login" in page.url or "login" in page.url:
-                if "locked" in page_error.lower():
-                    cb(status_callback, "FAILED: Account locked out. Wait 15 minutes then try again.")
-                elif "invalid" in page_error.lower() or "incorrect" in page_error.lower() or "wrong" in page_error.lower():
-                    cb(status_callback, "FAILED: Wrong username or password.")
-                elif page_error:
-                    cb(status_callback, f"FAILED: {page_error}")
-                else:
-                    cb(status_callback, "FAILED: Login did not succeed. Unknown reason.")
-                browser.close()
-                return 0
+                if session_cookie:
+                    cb(status_callback, "Cookie expired or invalid. Please get a fresh cookie from your browser and update it in Settings.")
+                    browser.close()
+                    return 0
+
+                cb(status_callback, "Cookie not set, trying username/password login...")
+                # Log inputs
+                inputs = page.query_selector_all("input")
+                cb(status_callback, f"Found {len(inputs)} input fields:")
+                for inp in inputs:
+                    t = inp.get_attribute("type") or "text"
+                    n = inp.get_attribute("name") or inp.get_attribute("id") or "?"
+                    cb(status_callback, f"  - input type={t} name={n}")
+
+                # Fill and submit
+                filled_user = False
+                for selector in ["input[name='Alias']", "input[name='username']", "input[name='email']", "input[type='text']"]:
+                    try:
+                        page.fill(selector, USERNAME, timeout=3000)
+                        cb(status_callback, f"Filled username: {selector}")
+                        filled_user = True
+                        break
+                    except: continue
+
+                for selector in ["input[name='Password']", "input[name='password']", "input[type='password']"]:
+                    try:
+                        page.fill(selector, PASSWORD, timeout=3000)
+                        cb(status_callback, f"Filled password: {selector}")
+                        break
+                    except: continue
+
+                for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')"]:
+                    try:
+                        page.click(selector, timeout=3000)
+                        cb(status_callback, f"Clicked submit: {selector}")
+                        break
+                    except: continue
+
+                try:
+                    page.wait_for_load_state("networkidle", timeout=10000)
+                except: pass
+                page.wait_for_timeout(3000)
+                cb(status_callback, f"After login - URL: {page.url}")
+
+                if "Login" in page.url or "login" in page.url:
+                    page_error = ""
+                    for err_sel in [".validation-summary-errors", ".text-danger", ".alert"]:
+                        try:
+                            el = page.query_selector(err_sel)
+                            if el:
+                                page_error = el.inner_text().strip()
+                                break
+                        except: pass
+                    if "locked" in page_error.lower():
+                        cb(status_callback, "FAILED: Account locked out. Wait 15 minutes.")
+                    elif page_error:
+                        cb(status_callback, f"FAILED: {page_error}")
+                    else:
+                        cb(status_callback, "FAILED: Wrong username or password.")
+                    browser.close()
+                    return 0
 
             # Log all links so we can find the leads section
             links = page.query_selector_all("a")

@@ -238,7 +238,7 @@ def settings():
     c = conn.cursor()
     if request.method == "POST":
         data = request.get_json()
-        for key in ["portal_password", "gmail_app_password"]:
+        for key in ["portal_password", "gmail_app_password", "session_cookie"]:
             if data.get(key):
                 c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
                 os.environ[key.upper()] = data[key]
@@ -258,6 +258,7 @@ def settings():
         "GMAIL_ADDRESS": os.getenv("GMAIL_ADDRESS", ""),
         "has_portal_password": bool(saved.get("portal_password")),
         "has_gmail_password": bool(saved.get("gmail_app_password")),
+        "has_session_cookie": bool(saved.get("session_cookie")),
     })
 
 
