@@ -192,7 +192,28 @@ def _push_cookies_to_render(cookie_json, status_callback=None):
         cb(status_callback, f"Could not push cookies to Render: {e}")
 
 
-def run_scraper(status_callback=None):
+def _parse_lead_tags(lead_tags):
+    """Extract email, DOB from lead_tags field. Returns (email, dob, clean_tags)"""
+    import re
+    email = ""
+    dob = ""
+    clean_lines = []
+    for line in lead_tags.replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("email:"):
+            val = line[6:].strip()
+            if "@" in val:
+                email = val
+        elif low.startswith("dob :") or low.startswith("dob:"):
+            dob = line.split(":", 1)[1].strip()
+        else:
+            clean_lines.append(line)
+    return email, dob, " | ".join(clean_lines)
+
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -200,14 +221,6 @@ def run_scraper(status_callback=None):
         return 0
 
     init_db()
-
-    # Load last scraped page
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='last_scraped_page'")
-    row = c.fetchone()
-    start_page = int(row[0]) + 1 if row else 1
-    conn.close()
 
     conn = get_connection()
     c = conn.cursor()
@@ -219,7 +232,6 @@ def run_scraper(status_callback=None):
     has_saved = bool(os.getenv("BROWSER_COOKIES"))
 
     cb(status_callback, "Starting browser...")
-    cb(status_callback, f"Resuming from page {start_page}...")
     method = 'Saved session' if has_saved else ('Session Cookie' if session_cookie else 'Username/Password')
     cb(status_callback, f"Login method: {method}")
 
@@ -235,8 +247,7 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
-            # Go directly to Lead Inbox
-            cb(status_callback, f"Navigating to Lead Inbox...")
+            cb(status_callback, "Navigating to Lead Inbox...")
             page.goto(LEAD_INBOX, timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
@@ -244,52 +255,24 @@ def run_scraper(status_callback=None):
                 pass
             cb(status_callback, f"Lead Inbox URL: {page.url}")
 
+            # --- Phase 1: scrape inbox table (fast, no detail pages) ---
             leads_data = []
-            page_num = 1
             tag_samples = set()
-
-            # Navigate to start_page
-            while page_num < start_page:
-                try:
-                    next_btn = page.query_selector("a:has-text('Next')")
-                    if next_btn and next_btn.is_visible():
-                        next_btn.click()
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=8000)
-                        except:
-                            pass
-                        page_num += 1
-                    else:
-                        cb(status_callback, "No more pages. All leads have been scraped.")
-                        browser.close()
-                        return 0
-                except:
-                    break
-
-            if is_cancelled():
-                cb(status_callback, "Sync cancelled.")
-                browser.close()
-                return 0
-
-            cb(status_callback, f"Scraping page {page_num}...")
-
-            # Wait for table rows
             try:
                 page.wait_for_selector("table tbody tr", timeout=8000)
             except:
-                cb(status_callback, "No table rows found on this page.")
+                cb(status_callback, "No table rows found.")
                 browser.close()
                 return 0
 
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} lead rows on page {page_num}")
+            cb(status_callback, f"Found {len(rows)} leads in inbox. Saving basic info...")
 
             for row in rows:
                 try:
                     cells = row.query_selector_all("td")
                     if len(cells) < 5:
                         continue
-
                     name = cells[3].inner_text().strip()
                     address = cells[4].inner_text().strip() if len(cells) > 4 else ""
                     lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
@@ -297,112 +280,27 @@ def run_scraper(status_callback=None):
                     city = cells[9].inner_text().strip() if len(cells) > 9 else ""
                     state = cells[10].inner_text().strip() if len(cells) > 10 else ""
                     lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
-
                     link = row.query_selector("a")
                     detail_url = link.get_attribute("href") if link else None
-
+                    email, dob, clean_tags = _parse_lead_tags(lead_tags)
                     leads_data.append({
-                        "name": name, "address": address, "lead_tags": lead_tags,
+                        "name": name, "address": address, "lead_tags": clean_tags,
                         "assign_date": assign_date, "city": city, "state": state,
                         "lead_type": lead_type, "detail_url": detail_url,
+                        "email": email, "phone": "", "dob": dob
                     })
-                    tag_samples.add(lead_tags[:40] if lead_tags else "(empty)")
+                    tag_samples.add(clean_tags[:40] if clean_tags else "(empty)")
                 except:
                     continue
 
-            # Check if there's a next page
-            has_next = False
-            try:
-                next_btn = page.query_selector("a:has-text('Next')")
-                has_next = next_btn and next_btn.is_visible()
-            except:
-                pass
-
-            # Save progress
-            conn = get_connection()
-            c = conn.cursor()
-            if has_next:
-                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scraped_page', ?)", (str(page_num),))
-                cb(status_callback, f"Page {page_num} done. Next sync will scrape page {page_num + 1}.")
-            else:
-                c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-                cb(status_callback, "All pages scraped! Next sync will start from page 1 again.")
-            conn.commit()
-            conn.close()
-
-            cb(status_callback, f"Collected {len(leads_data)} leads from inbox.")
-            cb(status_callback, f"Unique lead_tags found: {list(tag_samples)[:20]}")
-            # Report missing fields
-            missing_name = sum(1 for l in leads_data if not l.get("name") or l["name"] == "Unknown")
-            missing_tags = sum(1 for l in leads_data if not l.get("lead_tags"))
-            if missing_name:
-                cb(status_callback, f"Warning: {missing_name} leads have no name")
-            if missing_tags:
-                cb(status_callback, f"Warning: {missing_tags} leads have no lead_tags — will be saved as NO_POLICY")
-            cb(status_callback, "Fetching details for first 50 leads...")
-
-            # Fetch email from each lead detail page (first 50 to avoid timeout)
-            saved = 0
-            fetch_limit = min(len(leads_data), 50)
-            for i, lead in enumerate(leads_data[:fetch_limit]):
-                if is_cancelled():
-                    cb(status_callback, "Sync cancelled during detail fetch.")
-                    browser.close()
-                    return saved
-                try:
-                    if lead.get("detail_url"):
-                        detail_url = "https://www.planetaltig.com" + lead["detail_url"] if lead["detail_url"].startswith("/") else lead["detail_url"]
-                        page.goto(detail_url, timeout=15000)
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=8000)
-                        except:
-                            pass
-
-                        # Extract email
-                        email = ""
-                        for sel in ["a[href^='mailto:']", "[class*='email']", "td:has-text('@')"]:
-                            try:
-                                el = page.query_selector(sel)
-                                if el:
-                                    text = el.inner_text().strip()
-                                    if "@" in text:
-                                        email = text.replace("mailto:", "").strip()
-                                        break
-                            except:
-                                pass
-
-                        # Extract phone
-                        phone = ""
-                        for sel in ["a[href^='tel:']", "[class*='phone']"]:
-                            try:
-                                el = page.query_selector(sel)
-                                if el:
-                                    phone = el.inner_text().strip()
-                                    break
-                            except:
-                                pass
-
-                        lead["email"] = email
-                        lead["phone"] = phone
-
-                    if (i + 1) % 10 == 0:
-                        cb(status_callback, f"Fetched details for {i+1}/{fetch_limit} leads...")
-
-                    result = save_lead(lead)
-                    if result:
-                        saved += 1
-                except:
-                    continue
-
-            # Save remaining leads without email
-            for lead in leads_data[fetch_limit:]:
-                lead["email"] = ""
-                lead["phone"] = ""
-                save_lead(lead)
+            # Save all leads with emails parsed from tags
+            new_leads = sum(1 for l in leads_data if save_lead(l))
+            with_email = sum(1 for l in leads_data if l.get("email"))
+            cb(status_callback, f"Saved {new_leads} new leads. {with_email}/{len(leads_data)} have emails.")
+            cb(status_callback, f"Unique lead_tags: {list(tag_samples)[:10]}")
 
             browser.close()
-            cb(status_callback, f"Done! Saved {saved} new leads with details. {len(leads_data) - fetch_limit} saved without email (detail fetch limit).")
-            return saved
+            return new_leads
 
         except Exception as e:
             browser.close()
