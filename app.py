@@ -112,6 +112,11 @@ def send_task(cb, leads, template):
 
 
 # ── Routes ────────────────────────────────────────────
+@app.route("/api/health")
+def health():
+    return jsonify({"ok": True, "turso_url": bool(os.getenv("TURSO_DATABASE_URL")), "turso_token": bool(os.getenv("TURSO_AUTH_TOKEN"))})
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json()
