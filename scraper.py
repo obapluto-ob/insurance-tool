@@ -298,6 +298,8 @@ def _parse_lead_tags(lead_tags):
             with_email = sum(1 for l in leads_data if l.get("email"))
             cb(status_callback, f"Saved {new_leads} new leads. {with_email}/{len(leads_data)} have emails.")
             cb(status_callback, f"Unique lead_tags: {list(tag_samples)[:10]}")
+            type_samples = set(l["lead_type"] for l in leads_data if l.get("lead_type"))
+            cb(status_callback, f"Unique lead_type values: {list(type_samples)[:20]}")
 
             browser.close()
             return new_leads
