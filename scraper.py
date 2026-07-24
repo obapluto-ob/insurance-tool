@@ -309,7 +309,7 @@ def save_lead(lead):
         name = lead.get("name", "Unknown").strip() or "Unknown"
         email = lead.get("email", "").strip()
         phone = lead.get("phone", "").strip()
-        policy_status = lead.get("lead_tags", lead.get("lead_type", "Unknown")).strip()
+        policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip()
 
         c.execute("""
             INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)

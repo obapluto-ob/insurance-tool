@@ -1,11 +1,11 @@
 from database import get_connection
 
-# Exact values from planetaltig.com portal lead_tags column
-POS_KEYWORDS = ["pos", "policy owner", "policy owner services"]
-SGLW_KEYWORDS = ["sglw", "union", "union member"]
-ACTIVE_POLICY_KEYWORDS = ["active", "active policy", "existing policy", "current policy", "insured", "has policy", "has coverage"]
+# Exact lead_type values from planetaltig.com portal
+POS_KEYWORDS = ["pos"]
+SGLW_KEYWORDS = ["union"]
+# These are prospects to email — no policy yet
+PROSPECT_KEYWORDS = ["will kit", "mcgruff", "childsafe", "plus lead", "new address", "appointment"]
 
-# Emailable categories and which templates apply
 EMAILABLE_TEMPLATES = {
     "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
     "POS":       ["Will Kit", "Plus Leads"],
@@ -16,18 +16,18 @@ EMAILABLE_TEMPLATES = {
 def categorize_lead(policy_status: str) -> str:
     status = (policy_status or "").lower().strip()
 
-    # Active policy holders — do not email
-    for kw in ACTIVE_POLICY_KEYWORDS:
+    for kw in POS_KEYWORDS:
         if kw in status:
-            return "ACTIVE"
+            return "POS"
 
     for kw in SGLW_KEYWORDS:
         if kw in status:
             return "SGLW"
 
-    for kw in POS_KEYWORDS:
+    # Anything with appointment/will kit/plus lead/mcgruff = prospect = NO_POLICY
+    for kw in PROSPECT_KEYWORDS:
         if kw in status:
-            return "POS"
+            return "NO_POLICY"
 
     return "NO_POLICY"
 
@@ -42,16 +42,10 @@ def categorize_all_leads(status_callback=None):
     c.execute("SELECT id, policy_status FROM leads")
     rows = c.fetchall()
 
-    counts = {"NO_POLICY": 0, "POS": 0, "SGLW": 0, "ACTIVE": 0}
-    missing_fields = 0
+    counts = {"NO_POLICY": 0, "POS": 0, "SGLW": 0}
 
     for lead_id, policy_status in rows:
-        if not policy_status or policy_status.strip() == "" or policy_status.strip() == "Unknown":
-            category = "NO_POLICY"
-            missing_fields += 1
-        else:
-            category = categorize_lead(policy_status)
-
+        category = categorize_lead(policy_status or "")
         counts[category] = counts.get(category, 0) + 1
         c.execute("UPDATE leads SET category=? WHERE id=?", (category, lead_id))
 
@@ -60,9 +54,7 @@ def categorize_all_leads(status_callback=None):
 
     total = sum(counts.values())
     if status_callback:
-        status_callback(f"Categorized {total} leads — NO_POLICY: {counts['NO_POLICY']} | POS: {counts['POS']} | SGLW: {counts['SGLW']} | ACTIVE (skip): {counts['ACTIVE']}")
-        if missing_fields:
-            status_callback(f"Note: {missing_fields} leads had missing/unknown policy field — saved as NO_POLICY")
+        status_callback(f"Categorized {total} leads — NO_POLICY: {counts['NO_POLICY']} | POS: {counts['POS']} | SGLW: {counts['SGLW']}")
 
     return total
 
