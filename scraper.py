@@ -55,7 +55,7 @@ def run_scraper(status_callback=None):
 
             # Fill username
             filled_user = False
-            for selector in ["input[name='username']", "input[name='email']", "input[type='email']", "input[type='text']"]:
+            for selector in ["input[name='Alias']", "input[name='username']", "input[name='email']", "input[type='email']", "input[type='text']"]:
                 try:
                     page.fill(selector, USERNAME, timeout=3000)
                     cb(status_callback, f"Filled username using: {selector}")
@@ -68,7 +68,7 @@ def run_scraper(status_callback=None):
 
             # Fill password
             filled_pass = False
-            for selector in ["input[name='password']", "input[type='password']"]:
+            for selector in ["input[name='Password']", "input[name='password']", "input[type='password']"]:
                 try:
                     page.fill(selector, PASSWORD, timeout=3000)
                     cb(status_callback, f"Filled password using: {selector}")
@@ -92,18 +92,23 @@ def run_scraper(status_callback=None):
             if not submitted:
                 cb(status_callback, "WARNING: Could not find submit button")
 
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(5000)
             cb(status_callback, f"After login - URL: {page.url}")
             cb(status_callback, f"After login - Title: {page.title()}")
 
-            # Log all links on page after login
+            if "Login" in page.url or "login" in page.url:
+                cb(status_callback, "ERROR: Still on login page — check PORTAL_USERNAME and PORTAL_PASSWORD env vars on Render")
+                browser.close()
+                return 0
+
+            # Log all links so we can find the leads section
             links = page.query_selector_all("a")
-            cb(status_callback, f"Found {len(links)} links after login:")
-            for link in links[:20]:
+            cb(status_callback, f"Logged in! Found {len(links)} links:")
+            for link in links[:30]:
                 href = link.get_attribute("href") or ""
-                text = link.inner_text().strip()[:40]
+                text = link.inner_text().strip()[:50]
                 if text:
-                    cb(status_callback, f"  - [{text}] -> {href}")
+                    cb(status_callback, f"  [{text}] -> {href}")
 
             # Try to find leads section
             found_leads = False
