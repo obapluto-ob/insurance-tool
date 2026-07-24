@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "leads.db")
+DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "data", "leads.db"))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 

@@ -23,3 +23,9 @@ services:
         sync: false
       - key: APP_PIN
         value: "0518"
+      - key: DB_PATH
+        value: /data/leads.db
+    disk:
+      name: leads-db
+      mountPath: /data
+      sizeGB: 1
