@@ -16,13 +16,18 @@ def run_scraper(status_callback=None):
         from playwright.sync_api import sync_playwright
     except ImportError:
         if status_callback:
-            status_callback("❌ Playwright not installed.")
+            status_callback("Playwright not installed.")
         return 0
 
     init_db()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = p.chromium.launch(headless=True, args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process"
+        ])
         page = browser.new_page()
 
         try:

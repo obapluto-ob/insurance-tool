@@ -415,3 +415,48 @@ body.login-page {
   margin-bottom: 20px;
   border: 1px solid #166534;
 }
+
+.pass-wrap {
+  display: flex;
+  gap: 8px;
+}
+
+.pass-wrap input { flex: 1; }
+
+.eye-btn {
+  background: #1e2535;
+  border: 1px solid #2e3a50;
+  color: #9aa3b2;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.saved-badge {
+  background: #0f2e1a;
+  color: #22c55e;
+  border: 1px solid #166534;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.status-yes {
+  color: #22c55e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-no {
+  color: #ef4444;
+  font-size: 12px;
+}

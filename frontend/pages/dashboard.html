@@ -21,8 +21,8 @@
       <div class="page-header">
         <h1>Dashboard</h1>
         <div class="actions">
-          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">🔄 Sync Portal</button>
-          <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">📬 Check Replies</button>
+          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">Sync Portal</button>
+          <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">Check Replies</button>
         </div>
       </div>
       <div class="stats-grid">
@@ -35,26 +35,27 @@
       </div>
       <div class="quick-actions">
         <h3>Quick Actions</h3>
-        <a href="leads.html?category=NO_POLICY" class="quick-btn">📋 View No Policy Leads</a>
-        <a href="responses.html" class="quick-btn">📥 View Responses</a>
+        <a href="leads.html?category=NO_POLICY" class="quick-btn">View No Policy Leads</a>
+        <a href="responses.html" class="quick-btn">View Responses</a>
       </div>
     `;
   }
 
   async function syncPortal(btn) {
-    btn.textContent = "⏳ Syncing...";
+    btn.textContent = "Syncing...";
     btn.disabled = true;
-    document.getElementById("status-bar").textContent = "🔄 Syncing portal... this may take a minute";
+    document.getElementById("status-bar").textContent = "Syncing portal... this may take a minute";
     await apiFetch("/api/sync");
-    setTimeout(() => { load(); }, 20000);
+    setTimeout(() => { btn.textContent = "Sync Portal"; btn.disabled = false; load(); }, 20000);
   }
 
   async function checkReplies(btn) {
-    btn.textContent = "⏳ Checking...";
+    btn.textContent = "Checking...";
     btn.disabled = true;
-    document.getElementById("status-bar").textContent = "📬 Checking Gmail for replies...";
+    document.getElementById("status-bar").textContent = "Checking Gmail for replies...";
+
     await apiFetch("/api/check_replies");
-    setTimeout(() => { load(); }, 8000);
+    setTimeout(() => { btn.textContent = "Check Replies"; btn.disabled = false; load(); }, 8000);
   }
 
   load();

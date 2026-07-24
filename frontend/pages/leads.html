@@ -29,8 +29,8 @@
         <td>${l.phone || "—"}</td>
         <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
         <td>${l.policy_status || "—"}</td>
-        <td>${l.email_sent ? "✅" : "❌"}</td>
-        <td>${l.response_received ? "✅" : "—"}</td>
+        <td>${l.email_sent ? "<span class=\"status-yes\">Sent</span>" : "<span class=\"status-no\">No</span>"}</td>
+        <td>${l.response_received ? "<span class=\"status-yes\">Yes</span>" : "<span class=\"status-no\">—</span>"}</td>
       </tr>
     `).join("") || `<tr><td colspan="8" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
 
@@ -43,8 +43,8 @@
             <option>McGruff Child Safe Kit</option>
             <option>Plus Leads</option>
           </select>
-          <button class="btn btn-secondary" onclick="selectNoPolicy()">✅ Select No Policy</button>
-          <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">📧 Send to Selected</button>
+          <button class="btn btn-secondary" onclick="selectNoPolicy()">Select No Policy</button>
+          <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">Send to Selected</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -77,14 +77,14 @@
     if (!ids.length) { alert("Please select at least one lead."); return; }
     const template = document.getElementById("template-select").value;
     if (!confirm(`Send "${template}" to ${ids.length} lead(s)?`)) return;
-    btn.textContent = "⏳ Sending...";
+    btn.textContent = "Sending...";
     btn.disabled = true;
-    document.getElementById("status-bar").textContent = `📧 Sending ${template} to ${ids.length} leads...`;
+    document.getElementById("status-bar").textContent = `Sending ${template} to ${ids.length} leads...`;
     await apiFetch("/api/send", {
       method: "POST",
       body: JSON.stringify({ ids, template })
     });
-    setTimeout(() => { load(); }, 8000);
+    setTimeout(() => { btn.textContent = "Send to Selected"; btn.disabled = false; load(); }, 8000);
   }
 
   load();

@@ -21,6 +21,20 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "dona1234")
 
 init_db()
 
+# Load persisted settings into env on startup
+def _load_saved_settings():
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT key, value FROM settings")
+        for key, value in c.fetchall():
+            os.environ[key.upper()] = value
+    except:
+        pass
+    conn.close()
+
+_load_saved_settings()
+
 task_status = {"message": "Ready.", "running": False}
 
 
@@ -163,17 +177,30 @@ def responses():
 @app.route("/api/settings", methods=["GET", "POST"])
 @protected
 def settings():
+    conn = get_connection()
+    c = conn.cursor()
     if request.method == "POST":
         data = request.get_json()
-        if data.get("portal_password"):
-            os.environ["PORTAL_PASSWORD"] = data["portal_password"]
-        if data.get("gmail_app_password"):
-            os.environ["GMAIL_APP_PASSWORD"] = data["gmail_app_password"]
+        for key in ["portal_password", "gmail_app_password"]:
+            if data.get(key):
+                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
+                os.environ[key.upper()] = data[key]
+        conn.commit()
+        conn.close()
         return jsonify({"ok": True})
 
+    c.execute("SELECT key, value FROM settings")
+    saved = dict(c.fetchall())
+    conn.close()
+    if saved.get("portal_password"):
+        os.environ["PORTAL_PASSWORD"] = saved["portal_password"]
+    if saved.get("gmail_app_password"):
+        os.environ["GMAIL_APP_PASSWORD"] = saved["gmail_app_password"]
     return jsonify({
         "PORTAL_USERNAME": os.getenv("PORTAL_USERNAME", ""),
         "GMAIL_ADDRESS": os.getenv("GMAIL_ADDRESS", ""),
+        "has_portal_password": bool(saved.get("portal_password")),
+        "has_gmail_password": bool(saved.get("gmail_app_password")),
     })
 
 
