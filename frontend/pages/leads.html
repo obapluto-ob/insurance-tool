@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Leads – Dona's Tool</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<script src="../js/config.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+  requireAuth();
+  renderNav("All Leads");
+
+  const params = new URLSearchParams(window.location.search);
+  const category = params.get("category") || "ALL";
+
+  async function load() {
+    const res = await apiFetch(`/api/leads?category=${category}`);
+    const leads = await res.json();
+
+    const rows = leads.map(l => `
+      <tr>
+        <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}"/></td>
+        <td>${l.full_name || "—"}</td>
+        <td>${l.email || "—"}</td>
+        <td>${l.phone || "—"}</td>
+        <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
+        <td>${l.policy_status || "—"}</td>
+        <td>${l.email_sent ? "✅" : "❌"}</td>
+        <td>${l.response_received ? "✅" : "—"}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="8" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
+
+    document.getElementById("page-content").innerHTML = `
+      <div class="page-header">
+        <h1>Leads <span class="badge">${leads.length}</span> ${category !== "ALL" ? `<span class="badge-cat">${category}</span>` : ""}</h1>
+        <div class="actions">
+          <select id="template-select" class="select-input">
+            <option>Will Kit</option>
+            <option>McGruff Child Safe Kit</option>
+            <option>Plus Leads</option>
+          </select>
+          <button class="btn btn-secondary" onclick="selectNoPolicy()">✅ Select No Policy</button>
+          <button class="btn btn-primary" onclick="sendSelected()">📧 Send to Selected</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="leads-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" onclick="toggleAll(this)"/></th>
+              <th>Name</th><th>Email</th><th>Phone</th>
+              <th>Category</th><th>Policy Status</th><th>Emailed</th><th>Response</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function toggleAll(cb) {
+    document.querySelectorAll(".lead-check").forEach(c => c.checked = cb.checked);
+  }
+
+  function selectNoPolicy() {
+    document.querySelectorAll(".lead-check").forEach(c => {
+      c.checked = c.dataset.category === "NO_POLICY";
+    });
+  }
+
+  async function sendSelected() {
+    const ids = [...document.querySelectorAll(".lead-check:checked")].map(c => parseInt(c.dataset.id));
+    if (!ids.length) { alert("Please select at least one lead."); return; }
+    const template = document.getElementById("template-select").value;
+    if (!confirm(`Send "${template}" to ${ids.length} lead(s)?`)) return;
+    document.getElementById("status-bar").textContent = "📧 Sending emails...";
+    await apiFetch("/api/send", {
+      method: "POST",
+      body: JSON.stringify({ ids, template })
+    });
+    setTimeout(load, 5000);
+  }
+
+  load();
+</script>
+</body>
+</html>

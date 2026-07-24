@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>⚙️ Settings</h1>
+</div>
+
+<div class="settings-wrap">
+  {% if msg %}
+  <div class="alert-success">{{ msg }}</div>
+  {% endif %}
+
+  <form method="POST">
+    <div class="settings-section">
+      <h3>🌐 Portal Credentials</h3>
+      <p class="settings-hint">Used to log into planetaltig.com and sync your leads.</p>
+      <div class="field-group">
+        <label>Portal Username</label>
+        <input type="text" value="{{ current.get('PORTAL_USERNAME', '') }}" disabled/>
+        <span class="field-note">Contact support to change username</span>
+      </div>
+      <div class="field-group">
+        <label>Portal Password</label>
+        <input type="password" name="portal_password" placeholder="Enter new portal password"/>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>📧 Gmail Settings</h3>
+      <p class="settings-hint">Used to send emails and check replies. Requires a Gmail App Password.</p>
+      <div class="field-group">
+        <label>Gmail Address</label>
+        <input type="text" value="{{ current.get('GMAIL_ADDRESS', '') }}" disabled/>
+      </div>
+      <div class="field-group">
+        <label>Gmail App Password</label>
+        <input type="password" name="gmail_app_password" placeholder="Enter 16-character app password"/>
+        <span class="field-note">
+          Get it at <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a>
+        </span>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+  </form>
+</div>
+{% endblock %}

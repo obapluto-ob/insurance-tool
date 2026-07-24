@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Leads
+    <span class="badge">{{ leads|length }}</span>
+    {% if category != 'ALL' %}<span class="badge-cat">{{ category }}</span>{% endif %}
+  </h1>
+  <div class="actions">
+    <select id="template-select" class="select-input">
+      <option>Will Kit</option>
+      <option>McGruff Child Safe Kit</option>
+      <option>Plus Leads</option>
+    </select>
+    <button class="btn btn-secondary" onclick="selectEmailable()">✅ Select No Policy</button>
+    <button class="btn btn-primary" onclick="sendSelected()">📧 Send to Selected</button>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="leads-table">
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="check-all" onclick="toggleAll(this)"/></th>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Phone</th>
+        <th>Category</th>
+        <th>Policy Status</th>
+        <th>Emailed</th>
+        <th>Response</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr>
+        <td><input type="checkbox" class="lead-check" data-id="{{ lead.id }}" data-category="{{ lead.category }}"/></td>
+        <td>{{ lead.full_name or '—' }}</td>
+        <td>{{ lead.email or '—' }}</td>
+        <td>{{ lead.phone or '—' }}</td>
+        <td><span class="tag tag-{{ lead.category|lower }}">{{ lead.category or '—' }}</span></td>
+        <td>{{ lead.policy_status or '—' }}</td>
+        <td>{% if lead.email_sent %}✅{% else %}❌{% endif %}</td>
+        <td>{% if lead.response_received %}✅{% else %}—{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">No leads found. Click Sync Portal to pull leads.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function toggleAll(cb) {
+  document.querySelectorAll('.lead-check').forEach(c => c.checked = cb.checked);
+}
+
+function selectEmailable() {
+  document.querySelectorAll('.lead-check').forEach(c => {
+    c.checked = c.dataset.category === 'NO_POLICY';
+  });
+}
+
+function sendSelected() {
+  const ids = [...document.querySelectorAll('.lead-check:checked')].map(c => parseInt(c.dataset.id));
+  if (!ids.length) { alert('Please select at least one lead.'); return; }
+  const template = document.getElementById('template-select').value;
+  if (!confirm(`Send "${template}" to ${ids.length} lead(s)?`)) return;
+  document.getElementById('status-bar').textContent = '📧 Sending emails...';
+  fetch('/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids, template})
+  }).then(() => {
+    setTimeout(() => location.reload(), 5000);
+  });
+}
+</script>
+{% endblock %}

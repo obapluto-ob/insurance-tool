@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login – Dona's Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+</head>
+<body class="login-page">
+  <div class="login-box">
+    <div class="login-logo">🛡️</div>
+    <h2>Dona's Insurance Tool</h2>
+    <p class="login-sub">Sign in to your account</p>
+    {% if error %}
+    <div class="alert">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <input type="text" name="username" placeholder="Username" required autofocus/>
+      <input type="password" name="password" placeholder="Password" required/>
+      <button type="submit">Sign In</button>
+    </form>
+  </div>
+</body>
+</html>

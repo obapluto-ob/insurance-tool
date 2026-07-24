@@ -1,0 +1,7 @@
+flask
+flask-cors
+gunicorn
+selenium
+webdriver-manager
+python-dotenv
+pyjwt

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <div class="actions">
+    <button class="btn btn-primary" onclick="syncPortal()">🔄 Sync Portal</button>
+    <button class="btn btn-secondary" onclick="checkReplies()">📬 Check Replies</button>
+  </div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-number">{{ total }}</div>
+    <div class="stat-label">Total Leads</div>
+  </div>
+  <div class="stat-card red">
+    <div class="stat-number">{{ no_policy }}</div>
+    <div class="stat-label">No Policy</div>
+  </div>
+  <div class="stat-card yellow">
+    <div class="stat-number">{{ pos }}</div>
+    <div class="stat-label">POS</div>
+  </div>
+  <div class="stat-card blue">
+    <div class="stat-number">{{ sglw }}</div>
+    <div class="stat-label">SGLW</div>
+  </div>
+  <div class="stat-card green">
+    <div class="stat-number">{{ emailed }}</div>
+    <div class="stat-label">Emails Sent</div>
+  </div>
+  <div class="stat-card purple">
+    <div class="stat-number">{{ responses }}</div>
+    <div class="stat-label">Responses</div>
+  </div>
+</div>
+
+<div class="quick-actions">
+  <h3>Quick Actions</h3>
+  <a href="/leads?category=NO_POLICY" class="quick-btn">📋 View No Policy Leads</a>
+  <a href="/responses" class="quick-btn">📥 View Responses</a>
+</div>
+
+<script>
+function syncPortal() {
+  document.getElementById('status-bar').textContent = '🔄 Syncing portal...';
+  fetch('/sync').then(() => {
+    setTimeout(() => location.reload(), 8000);
+  });
+}
+function checkReplies() {
+  document.getElementById('status-bar').textContent = '📬 Checking replies...';
+  fetch('/check_replies').then(() => {
+    setTimeout(() => location.reload(), 5000);
+  });
+}
+</script>
+{% endblock %}

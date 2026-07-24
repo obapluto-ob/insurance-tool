@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dona's Insurance Tool</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+</head>
+<body>
+  {% if session.logged_in %}
+  <nav class="sidebar">
+    <div class="logo">🛡️ Dona's Tool</div>
+    <a href="/dashboard" class="nav-link {% if request.path == '/dashboard' %}active{% endif %}">📊 Dashboard</a>
+    <a href="/leads" class="nav-link {% if request.path == '/leads' %}active{% endif %}">📋 All Leads</a>
+    <a href="/leads?category=NO_POLICY" class="nav-link">🔴 No Policy</a>
+    <a href="/leads?category=POS" class="nav-link">🟡 POS</a>
+    <a href="/leads?category=SGLW" class="nav-link">🔵 SGLW</a>
+    <a href="/responses" class="nav-link {% if request.path == '/responses' %}active{% endif %}">📥 Responses</a>
+    <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">⚙️ Settings</a>
+    <div class="sidebar-bottom">
+      <a href="/logout" class="nav-link logout">🚪 Logout</a>
+    </div>
+  </nav>
+  {% endif %}
+
+  <main class="{% if session.logged_in %}with-sidebar{% endif %}">
+    {% if session.logged_in %}
+    <div class="topbar">
+      <div id="status-bar">⏳ Ready.</div>
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  {% if session.logged_in %}
+  <script>
+    setInterval(() => {
+      fetch('/status').then(r => r.json()).then(d => {
+        document.getElementById('status-bar').textContent = d.message;
+      });
+    }, 2000);
+  </script>
+  {% endif %}
+</body>
+</html>

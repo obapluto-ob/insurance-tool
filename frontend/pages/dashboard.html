@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard – Dona's Tool</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<script src="../js/config.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+  requireAuth();
+  renderNav("Dashboard");
+
+  async function load() {
+    const res = await apiFetch("/api/dashboard");
+    const d = await res.json();
+    document.getElementById("page-content").innerHTML = `
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="syncPortal()">🔄 Sync Portal</button>
+          <button class="btn btn-secondary" onclick="checkReplies()">📬 Check Replies</button>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-number">${d.total}</div><div class="stat-label">Total Leads</div></div>
+        <div class="stat-card red"><div class="stat-number">${d.no_policy}</div><div class="stat-label">No Policy</div></div>
+        <div class="stat-card yellow"><div class="stat-number">${d.pos}</div><div class="stat-label">POS</div></div>
+        <div class="stat-card blue"><div class="stat-number">${d.sglw}</div><div class="stat-label">SGLW</div></div>
+        <div class="stat-card green"><div class="stat-number">${d.emailed}</div><div class="stat-label">Emails Sent</div></div>
+        <div class="stat-card purple"><div class="stat-number">${d.responses}</div><div class="stat-label">Responses</div></div>
+      </div>
+      <div class="quick-actions">
+        <h3>Quick Actions</h3>
+        <a href="leads.html?category=NO_POLICY" class="quick-btn">📋 View No Policy Leads</a>
+        <a href="responses.html" class="quick-btn">📥 View Responses</a>
+      </div>
+    `;
+  }
+
+  async function syncPortal() {
+    document.getElementById("status-bar").textContent = "🔄 Syncing portal...";
+    await apiFetch("/api/sync");
+    setTimeout(load, 8000);
+  }
+
+  async function checkReplies() {
+    document.getElementById("status-bar").textContent = "📬 Checking replies...";
+    await apiFetch("/api/check_replies");
+    setTimeout(load, 5000);
+  }
+
+  load();
+</script>
+</body>
+</html>
