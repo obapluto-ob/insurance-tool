@@ -1,7 +1,6 @@
 flask
 flask-cors
 gunicorn
-selenium
-webdriver-manager
+playwright
 python-dotenv
 pyjwt

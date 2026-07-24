@@ -163,35 +163,18 @@ def responses():
 @app.route("/api/settings", methods=["GET", "POST"])
 @protected
 def settings():
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
     if request.method == "POST":
         data = request.get_json()
-        lines = []
-        with open(env_path, "r") as f:
-            for line in f:
-                if line.startswith("PORTAL_PASSWORD=") and data.get("portal_password"):
-                    lines.append(f"PORTAL_PASSWORD={data['portal_password']}\n")
-                elif line.startswith("GMAIL_APP_PASSWORD=") and data.get("gmail_app_password"):
-                    lines.append(f"GMAIL_APP_PASSWORD={data['gmail_app_password']}\n")
-                else:
-                    lines.append(line)
-        with open(env_path, "w") as f:
-            f.writelines(lines)
-        load_dotenv(override=True)
+        if data.get("portal_password"):
+            os.environ["PORTAL_PASSWORD"] = data["portal_password"]
+        if data.get("gmail_app_password"):
+            os.environ["GMAIL_APP_PASSWORD"] = data["gmail_app_password"]
         return jsonify({"ok": True})
 
-    current = {}
-    with open(env_path, "r") as f:
-        for line in f:
-            if "=" in line:
-                k, v = line.strip().split("=", 1)
-                current[k] = v
-    # Never expose passwords
-    current.pop("PORTAL_PASSWORD", None)
-    current.pop("GMAIL_APP_PASSWORD", None)
-    current.pop("APP_PASSWORD", None)
-    current.pop("SECRET_KEY", None)
-    return jsonify(current)
+    return jsonify({
+        "PORTAL_USERNAME": os.getenv("PORTAL_USERNAME", ""),
+        "GMAIL_ADDRESS": os.getenv("GMAIL_ADDRESS", ""),
+    })
 
 
 if __name__ == "__main__":
