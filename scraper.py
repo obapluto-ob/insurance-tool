@@ -5,7 +5,7 @@ from database import get_connection, init_db
 
 load_dotenv()
 
-PORTAL_URL = os.getenv("PORTAL_URL")
+PORTAL_URL = os.getenv("PORTAL_URL", "https://www.planetaltig.com")
 USERNAME = os.getenv("PORTAL_USERNAME")
 PASSWORD = os.getenv("PORTAL_PASSWORD")
 LEAD_INBOX = "https://www.planetaltig.com/Lead/Inbox"
