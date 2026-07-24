@@ -49,6 +49,30 @@
         <div id="log-body" class="log-body"></div>
       </div>
     `;
+
+    // Auto-reconnect if sync is already running
+    checkIfSyncRunning();
+  }
+
+  async function checkIfSyncRunning() {
+    try {
+      const res = await apiFetch("/api/status");
+      const d = await res.json();
+      if (d.running || (d.logs && d.logs.length > 0 && d.message !== "Ready.")) {
+        // Sync is running or just finished — show the log panel with all existing logs
+        openLog("Sync Log — Live Output");
+        const logs = d.logs || [];
+        logs.forEach(msg => appendLog(msg));
+        seenLogs = logs.length;
+        if (d.running) {
+          const btn = document.getElementById("sync-btn");
+          if (btn) { btn.textContent = "Syncing..."; btn.disabled = true; }
+          startLogPolling();
+        } else {
+          appendLog("--- Sync finished. Close this panel when ready. ---");
+        }
+      }
+    } catch {}
   }
 
   function openLog(title) {
@@ -69,7 +93,9 @@
     const body = document.getElementById("log-body");
     if (!body) return;
     const line = document.createElement("div");
-    line.className = "log-line" + (msg.includes("ERROR") || msg.includes("WARNING") ? " log-warn" : msg.includes("Saved") || msg.includes("complete") ? " log-ok" : "");
+    line.className = "log-line" +
+      (msg.includes("FAILED") || msg.includes("ERROR") ? " log-warn" :
+       msg.includes("saved") || msg.includes("successful") || msg.includes("Done") ? " log-ok" : "");
     line.textContent = msg;
     body.appendChild(line);
     body.scrollTop = body.scrollHeight;
@@ -78,22 +104,22 @@
   function startLogPolling() {
     let doneOnce = false;
     logInterval = setInterval(async () => {
-      const res = await apiFetch("/api/status");
-      const d = await res.json();
-      const logs = d.logs || [];
-      for (let i = seenLogs; i < logs.length; i++) {
-        appendLog(logs[i]);
-      }
-      seenLogs = logs.length;
-      if (!d.running && logs.length > 0 && !doneOnce) {
-        doneOnce = true;
-        clearInterval(logInterval);
-        logInterval = null;
-        appendLog("--- Sync finished. Close this panel when ready. ---");
-        const btn = document.getElementById("sync-btn");
-        if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
-      }
-    }, 1000);
+      try {
+        const res = await apiFetch("/api/status");
+        const d = await res.json();
+        const logs = d.logs || [];
+        for (let i = seenLogs; i < logs.length; i++) appendLog(logs[i]);
+        seenLogs = logs.length;
+        if (!d.running && logs.length > 0 && !doneOnce) {
+          doneOnce = true;
+          clearInterval(logInterval);
+          logInterval = null;
+          appendLog("--- Sync finished. Close this panel when ready. ---");
+          const btn = document.getElementById("sync-btn");
+          if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
+        }
+      } catch {}
+    }, 1500);
   }
 
   async function syncPortal(btn) {
