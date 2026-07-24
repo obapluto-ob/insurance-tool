@@ -170,21 +170,26 @@ def _save_cookies(context, status_callback=None):
 
 def _push_cookies_to_render(cookie_json, status_callback=None):
     import urllib.request
+    import urllib.error
+    import json as _json
     service_id = os.getenv("RENDER_SERVICE_ID")
     api_key = os.getenv("RENDER_API_KEY")
     if not service_id or not api_key:
+        cb(status_callback, "Note: RENDER_SERVICE_ID or RENDER_API_KEY not set — cookies won't survive restart")
         return
     try:
-        import json as _json
         url = f"https://api.render.com/v1/services/{service_id}/env-vars"
-        # Render expects the full list of env vars to update
         payload = _json.dumps([{"key": "BROWSER_COOKIES", "value": cookie_json}]).encode()
         req = urllib.request.Request(url, data=payload, method="PUT")
         req.add_header("Authorization", f"Bearer {api_key}")
         req.add_header("Content-Type", "application/json")
-        urllib.request.urlopen(req, timeout=10)
+        resp = urllib.request.urlopen(req, timeout=10)
+        cb(status_callback, f"Cookies pushed to Render env var (status {resp.status}). Will survive restarts.")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        cb(status_callback, f"Render API error {e.code}: {body}")
     except Exception as e:
-        cb(status_callback, f"Note: Could not persist cookies to Render ({e})")
+        cb(status_callback, f"Could not push cookies to Render: {e}")
 
 
 def run_scraper(status_callback=None):
