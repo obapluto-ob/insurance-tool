@@ -18,17 +18,26 @@ function authHeaders() {
 }
 
 function requireAuth() {
-  if (!getToken()) window.location.href = "/index.html";
+  if (!getToken()) {
+    const base = window.location.pathname.includes("/pages/") ? "../index.html" : "index.html";
+    window.location.href = base;
+  }
 }
 
 async function apiFetch(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: authHeaders()
-  });
-  if (res.status === 401) {
-    clearToken();
-    window.location.href = "/index.html";
+  try {
+    const res = await fetch(`${API}${path}`, {
+      ...options,
+      headers: { ...authHeaders(), ...(options.headers || {}) }
+    });
+    if (res.status === 401) {
+      clearToken();
+      const base = window.location.pathname.includes("/pages/") ? "../index.html" : "index.html";
+      window.location.href = base;
+    }
+    return res;
+  } catch (err) {
+    console.error(`[apiFetch] ${path} failed:`, err);
+    throw err;
   }
-  return res;
 }

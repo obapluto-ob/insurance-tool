@@ -4,6 +4,7 @@ import threading
 import os
 import jwt
 import datetime
+import logging
 from dotenv import load_dotenv
 from database import init_db, get_connection
 from categorizer import categorize_all_leads, get_leads_by_category
@@ -12,6 +13,12 @@ from scraper import run_scraper
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+log = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
 
@@ -19,19 +26,24 @@ SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
 APP_PIN = os.getenv("APP_PIN", "0518")
 
 
-init_db()
+try:
+    init_db()
+    log.info("Database initialized OK")
+except Exception as e:
+    log.error(f"Database init FAILED: {e}")
 
 # Load persisted settings into env on startup
 def _load_saved_settings():
-    conn = get_connection()
-    c = conn.cursor()
     try:
+        conn = get_connection()
+        c = conn.cursor()
         c.execute("SELECT key, value FROM settings")
         for key, value in c.fetchall():
             os.environ[key.upper()] = value
-    except:
-        pass
-    conn.close()
+        conn.close()
+        log.info("Settings loaded from DB")
+    except Exception as e:
+        log.error(f"Failed to load settings: {e}")
 
 _load_saved_settings()
 
@@ -75,7 +87,12 @@ def run_task(fn, *args):
         def cb(msg):
             task_status["message"] = msg
             task_status["logs"].append(msg)
-        fn(cb, *args)
+            log.info(f"[TASK] {msg}")
+        try:
+            fn(cb, *args)
+        except Exception as e:
+            log.error(f"[TASK] crashed: {e}")
+            cb(f"ERROR: {e}")
         task_status["running"] = False
         task_status["cancel"] = False
     threading.Thread(target=wrapper, daemon=True).start()
@@ -100,37 +117,59 @@ def login():
     data = request.get_json()
     pin = data.get("pin", "")
     if pin == APP_PIN:
+        log.info("[login] PIN accepted")
         return jsonify({"token": make_token()})
+    log.warning("[login] Wrong PIN attempt")
     return jsonify({"error": "Incorrect PIN"}), 401
 
 
 @app.route("/api/dashboard")
 @protected
 def dashboard():
-    conn = get_connection()
-    c = conn.cursor()
-    stats = {}
-    for key, query in [
-        ("total", "SELECT COUNT(*) FROM leads"),
-        ("no_policy", "SELECT COUNT(*) FROM leads WHERE category='NO_POLICY'"),
-        ("pos", "SELECT COUNT(*) FROM leads WHERE category='POS'"),
-        ("sglw", "SELECT COUNT(*) FROM leads WHERE category='SGLW'"),
-        ("active", "SELECT COUNT(*) FROM leads WHERE category='ACTIVE'"),
-        ("emailed", "SELECT COUNT(*) FROM leads WHERE email_sent=1"),
-        ("responses", "SELECT COUNT(*) FROM leads WHERE response_received=1"),
-    ]:
-        c.execute(query)
-        stats[key] = c.fetchone()[0]
-    conn.close()
-    return jsonify(stats)
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(category='NO_POLICY') as no_policy,
+                SUM(category='POS') as pos,
+                SUM(category='SGLW') as sglw,
+                SUM(category='ACTIVE') as active,
+                SUM(email_sent=1) as emailed,
+                SUM(response_received=1) as responses
+            FROM leads
+        """)
+        row = c.fetchone()
+        conn.close()
+        stats = {
+            "total":     row[0] or 0,
+            "no_policy": row[1] or 0,
+            "pos":       row[2] or 0,
+            "sglw":      row[3] or 0,
+            "active":    row[4] or 0,
+            "emailed":   row[5] or 0,
+            "responses": row[6] or 0,
+        }
+        log.info(f"[dashboard] stats: {stats}")
+        return jsonify(stats)
+    except Exception as e:
+        log.error(f"[dashboard] ERROR: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/leads")
 @protected
 def leads():
-    cat = request.args.get("category", "ALL")
-    data = get_leads_by_category(None if cat == "ALL" else cat)
-    return jsonify(data)
+    try:
+        cat = request.args.get("category", "ALL")
+        log.info(f"[leads] fetching category={cat}")
+        data = get_leads_by_category(None if cat == "ALL" else cat)
+        log.info(f"[leads] returned {len(data)} leads")
+        return jsonify(data)
+    except Exception as e:
+        log.error(f"[leads] ERROR: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/send", methods=["POST"])
@@ -165,8 +204,49 @@ def sync_reset():
 @app.route("/api/sync")
 @protected
 def sync():
+    if task_status["running"]:
+        log.warning("[sync] already running, ignoring duplicate request")
+        return jsonify({"ok": False, "message": "Sync already running"})
+    log.info("[sync] starting")
     run_task(scraper_task)
     return jsonify({"ok": True})
+
+
+@app.route("/api/debug")
+@protected
+def debug():
+    """Returns system state — visible in browser and Render logs."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM leads")
+        total = c.fetchone()[0]
+        c.execute("SELECT value FROM settings WHERE key='last_scraped_page'")
+        row = c.fetchone()
+        last_page = row[0] if row else "not set (will start page 1)"
+        c.execute("SELECT value FROM settings WHERE key='portal_explored'")
+        row = c.fetchone()
+        explored = "yes" if row else "no (will run on next sync)"
+        c.execute("SELECT key FROM settings")
+        setting_keys = [r[0] for r in c.fetchall()]
+        conn.close()
+        info = {
+            "total_leads_in_db": total,
+            "last_scraped_page": last_page,
+            "portal_explored": explored,
+            "settings_keys": setting_keys,
+            "task_running": task_status["running"],
+            "task_message": task_status["message"],
+            "turso_url_set": bool(os.getenv("TURSO_DATABASE_URL")),
+            "turso_token_set": bool(os.getenv("TURSO_AUTH_TOKEN")),
+            "gmail_set": bool(os.getenv("GMAIL_APP_PASSWORD")),
+            "portal_password_set": bool(os.getenv("PORTAL_PASSWORD")),
+        }
+        log.info(f"[debug] {info}")
+        return jsonify(info)
+    except Exception as e:
+        log.error(f"[debug] ERROR: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/check_replies")

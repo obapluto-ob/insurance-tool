@@ -18,9 +18,17 @@
   let seenLogs = 0;
 
   async function load() {
-    const res = await apiFetch("/api/dashboard");
-    const d = await res.json();
-    document.getElementById("page-content").innerHTML = `
+    try {
+      const res = await apiFetch("/api/dashboard");
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error("[dashboard] /api/dashboard error:", res.status, txt);
+        document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load dashboard (${res.status}). Check console for details.</div>`;
+        return;
+      }
+      const d = await res.json();
+      console.log("[dashboard] stats:", d);
+      document.getElementById("page-content").innerHTML = `
       <div class="page-header">
         <h1>Dashboard</h1>
         <div class="actions">
@@ -53,9 +61,12 @@
         <div id="log-body" class="log-body"></div>
       </div>
     `;
-
-    // Auto-reconnect if sync is already running
-    checkIfSyncRunning();
+      checkIfSyncRunning();
+    } catch (err) {
+      console.error("[dashboard] load() crashed:", err);
+      const el = document.getElementById("page-content");
+      if (el) el.innerHTML = `<div class="empty" style="color:red">Dashboard failed to load. Check browser console (F12).</div>`;
+    }
   }
 
   async function checkIfSyncRunning() {
