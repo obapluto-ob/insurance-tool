@@ -244,6 +244,7 @@ def signature():
     })
 
 
+@app.route("/api/settings", methods=["GET", "POST"])
 @protected
 def settings():
     conn = get_connection()
