@@ -17,24 +17,14 @@ USERNAME = os.getenv("PORTAL_USERNAME")
 PASSWORD = os.getenv("PORTAL_PASSWORD")
 
 
-def get_driver(headless=False):
+def get_driver():
     options = webdriver.ChromeOptions()
-    if headless:
-        options.add_argument("--headless")
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-
-    # Try system chromium first, fall back to webdriver-manager
-    for chromium_path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
-        if os.path.exists(chromium_path):
-            options.binary_location = chromium_path
-            chromedriver_path = chromium_path.replace("chromium", "chromedriver").replace("google-chrome", "chromedriver")
-            if os.path.exists(chromedriver_path):
-                return webdriver.Chrome(service=Service(chromedriver_path), options=options)
-            break
-
-    # Fall back to webdriver-manager
+    options.add_argument("--remote-debugging-port=9222")
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
@@ -236,7 +226,7 @@ def save_leads(leads, status_callback=None):
 
 
 def run_scraper(status_callback=None):
-    driver = get_driver(headless=False)
+    driver = get_driver()
     try:
         logged_in = login(driver, status_callback)
         if not logged_in:
