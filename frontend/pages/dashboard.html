@@ -114,6 +114,8 @@
         const logs = d.logs || [];
         for (let i = seenLogs; i < logs.length; i++) appendLog(logs[i]);
         seenLogs = logs.length;
+        const bar = document.getElementById("status-bar");
+        if (bar) bar.textContent = d.message;
         if (!d.running && logs.length > 0 && !doneOnce) {
           doneOnce = true;
           clearInterval(logInterval);
@@ -125,7 +127,7 @@
           if (cancelBtn) cancelBtn.style.display = "none";
         }
       } catch {}
-    }, 1500);
+    }, 3000);
   }
 
   async function cancelSync() {

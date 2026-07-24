@@ -150,6 +150,18 @@ def send():
     return jsonify({"ok": True})
 
 
+@app.route("/api/sync/reset", methods=["POST"])
+@protected
+def sync_reset():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+    c.execute("DELETE FROM settings WHERE key='portal_explored'")
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "message": "Sync reset. Next sync starts from page 1."})
+
+
 @app.route("/api/sync")
 @protected
 def sync():

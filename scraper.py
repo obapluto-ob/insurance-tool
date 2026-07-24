@@ -219,6 +219,9 @@ def run_scraper(status_callback=None):
     start_page = int(row[0]) + 1 if row else 1
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
     row = c.fetchone()
+    # check if portal has been explored before
+    c.execute("SELECT value FROM settings WHERE key='portal_explored'")
+    explored = c.fetchone()
     conn.close()
     session_cookie = row[0] if row else None
 
@@ -240,125 +243,130 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
-            # ── PORTAL EXPLORER ──────────────────────────────────────────
-            cb(status_callback, "--- PORTAL EXPLORER: reading navigation ---")
-            try:
-                nav_links = page.query_selector_all("nav a, .navbar a, .sidebar a, .menu a, #nav a, ul.nav a")
-                seen_hrefs = set()
-                explore_urls = []
-                for link in nav_links:
-                    href = link.get_attribute("href") or ""
-                    text = link.inner_text().strip()
-                    if not href or href.startswith("#") or href.startswith("javascript"):
-                        continue
-                    if not href.startswith("http"):
-                        href = "https://www.planetaltig.com" + href
-                    if href not in seen_hrefs and "planetaltig.com" in href:
-                        seen_hrefs.add(href)
-                        explore_urls.append((text, href))
-                        cb(status_callback, f"  NAV LINK: [{text}] → {href}")
-
-                if not explore_urls:
-                    cb(status_callback, "  No nav links found — trying common portal paths...")
-                    for path in ["/Lead/Inbox", "/Lead/Active", "/Lead/All", "/Client", "/Client/Index",
-                                 "/Policy", "/Policy/Index", "/Member", "/Member/Index",
-                                 "/Lead/Index", "/Home", "/Dashboard"]:
-                        explore_urls.append((path, "https://www.planetaltig.com" + path))
-
-                for label, url in explore_urls:
-                    if is_cancelled():
-                        break
-                    try:
-                        page.goto(url, timeout=15000)
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=6000)
-                        except:
-                            pass
-                        actual_url = page.url
-                        if "login" in actual_url.lower():
-                            cb(status_callback, f"  [{label}] → redirected to login (needs auth)")
+            # ── ONE-TIME PORTAL EXPLORER ──────────────────────────────
+            if not explored:
+                cb(status_callback, "--- PORTAL EXPLORER (first time only) ---")
+                try:
+                    nav_links = page.query_selector_all("nav a, .navbar a, .sidebar a, .menu a, #nav a, ul.nav a")
+                    seen_hrefs = set()
+                    explore_urls = []
+                    for link in nav_links:
+                        href = link.get_attribute("href") or ""
+                        text = link.inner_text().strip()
+                        if not href or href.startswith("#") or href.startswith("javascript"):
                             continue
+                        if not href.startswith("http"):
+                            href = "https://www.planetaltig.com" + href
+                        if href not in seen_hrefs and "planetaltig.com" in href:
+                            seen_hrefs.add(href)
+                            explore_urls.append((text, href))
+                            cb(status_callback, f"  NAV: [{text}] → {href}")
 
-                        # Read table headers
-                        headers = []
-                        header_els = page.query_selector_all("table thead th, table thead td")
-                        for h in header_els:
-                            headers.append(h.inner_text().strip())
+                    if not explore_urls:
+                        cb(status_callback, "  No nav links found — trying common paths...")
+                        for path in ["/Lead/Inbox", "/Lead/Active", "/Lead/All", "/Client/Index",
+                                     "/Policy/Index", "/Member/Index", "/Home"]:
+                            explore_urls.append((path, "https://www.planetaltig.com" + path))
 
-                        # Read first data row
-                        first_row_cells = []
-                        first_row = page.query_selector("table tbody tr")
-                        if first_row:
-                            for cell in first_row.query_selector_all("td")[:8]:
-                                first_row_cells.append(cell.inner_text().strip()[:30])
+                    for label, url in explore_urls:
+                        if is_cancelled():
+                            break
+                        try:
+                            page.goto(url, timeout=12000)
+                            try:
+                                page.wait_for_load_state("networkidle", timeout=5000)
+                            except:
+                                pass
+                            if "login" in page.url.lower():
+                                cb(status_callback, f"  [{label}] → needs auth")
+                                continue
+                            headers = [h.inner_text().strip() for h in page.query_selector_all("table thead th")]
+                            row_count = len(page.query_selector_all("table tbody tr"))
+                            first_row = page.query_selector("table tbody tr")
+                            sample = [c.inner_text().strip()[:25] for c in first_row.query_selector_all("td")[:6]] if first_row else []
+                            cb(status_callback, f"  [{label}] rows={row_count} headers={headers}")
+                            if sample:
+                                cb(status_callback, f"    sample={sample}")
+                        except Exception as ex:
+                            cb(status_callback, f"  [{label}] ERROR: {ex}")
 
-                        row_count = len(page.query_selector_all("table tbody tr"))
+                    conn2 = get_connection()
+                    c2 = conn2.cursor()
+                    c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('portal_explored', '1')")
+                    conn2.commit()
+                    conn2.close()
+                except Exception as ex:
+                    cb(status_callback, f"  EXPLORER ERROR: {ex}")
+                cb(status_callback, "--- EXPLORER DONE ---")
+            # ─────────────────────────────────────────────────────────
 
-                        cb(status_callback, f"  PAGE [{label}] url={actual_url}")
-                        cb(status_callback, f"    rows={row_count} | headers={headers}")
-                        if first_row_cells:
-                            cb(status_callback, f"    sample_row={first_row_cells}")
-                        else:
-                            cb(status_callback, f"    (no table data on this page)")
-                    except Exception as ex:
-                        cb(status_callback, f"  [{label}] ERROR: {ex}")
-            except Exception as ex:
-                cb(status_callback, f"  EXPLORER ERROR: {ex}")
-            cb(status_callback, "--- PORTAL EXPLORER DONE ---")
-            # ─────────────────────────────────────────────────────────────
-
-            cb(status_callback, "Navigating to Lead Inbox...")
-            page.goto(LEAD_INBOX, timeout=30000)
+            # Direct URL to the target page — no clicking through pages
+            inbox_url = f"{LEAD_INBOX}?page={start_page}" if start_page > 1 else LEAD_INBOX
+            cb(status_callback, f"Navigating to page {start_page}...")
+            page.goto(inbox_url, timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except:
                 pass
-            cb(status_callback, f"Lead Inbox URL: {page.url}")
 
-            # Navigate to start_page by clicking Next until we get there
-            page_num = 1
-            while page_num < start_page:
+            # Fallback: if direct URL didn't work, click Next to navigate
+            actual_page = 1
+            if start_page > 1:
                 try:
-                    next_btn = page.query_selector("a:has-text('Next')")
-                    if next_btn and next_btn.is_visible():
-                        next_btn.click()
+                    page_indicator = page.query_selector(".pagination .active, .page-item.active")
+                    if page_indicator:
+                        actual_page = int(page_indicator.inner_text().strip())
+                    if actual_page != start_page:
+                        cb(status_callback, f"Direct URL didn't work, clicking through pages...")
+                        page.goto(LEAD_INBOX, timeout=30000)
                         try:
-                            page.wait_for_load_state("networkidle", timeout=8000)
+                            page.wait_for_load_state("networkidle", timeout=10000)
                         except:
                             pass
-                        page_num += 1
-                    else:
-                        cb(status_callback, "All pages already scraped. Resetting to page 1.")
-                        conn = get_connection()
-                        c = conn.cursor()
-                        c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-                        conn.commit()
-                        conn.close()
-                        browser.close()
-                        return 0
+                        while actual_page < start_page:
+                            next_btn = page.query_selector("a:has-text('Next')")
+                            if next_btn and next_btn.is_visible():
+                                next_btn.click()
+                                try:
+                                    page.wait_for_load_state("networkidle", timeout=8000)
+                                except:
+                                    pass
+                                actual_page += 1
+                            else:
+                                cb(status_callback, "All pages scraped. Resetting to page 1.")
+                                conn3 = get_connection()
+                                c3 = conn3.cursor()
+                                c3.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+                                conn3.commit()
+                                conn3.close()
+                                browser.close()
+                                return 0
                 except:
-                    break
+                    pass
 
             if is_cancelled():
                 cb(status_callback, "Sync cancelled.")
                 browser.close()
                 return 0
 
-            cb(status_callback, f"Scraping page {page_num}...")
+            cb(status_callback, f"Scraping page {start_page}...")
 
             try:
                 page.wait_for_selector("table tbody tr", timeout=8000)
             except:
-                cb(status_callback, "No table rows found on this page.")
+                cb(status_callback, "No table rows found. Resetting page counter.")
+                conn4 = get_connection()
+                c4 = conn4.cursor()
+                c4.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+                conn4.commit()
+                conn4.close()
                 browser.close()
                 return 0
 
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} leads on page {page_num}.")
+            cb(status_callback, f"Found {len(rows)} leads on page {start_page}.")
 
             leads_data = []
-            tag_samples = set()
-
             for row in rows:
                 if is_cancelled():
                     cb(status_callback, "Sync cancelled.")
@@ -384,11 +392,10 @@ def run_scraper(status_callback=None):
                         "lead_type": lead_type, "detail_url": detail_url,
                         "email": email, "phone": "", "dob": dob
                     })
-                    tag_samples.add(clean_tags[:40] if clean_tags else "(empty)")
                 except:
                     continue
 
-            # Save progress — next sync picks up from next page
+            # Check for next page
             has_next = False
             try:
                 next_btn = page.query_selector("a:has-text('Next')")
@@ -396,16 +403,16 @@ def run_scraper(status_callback=None):
             except:
                 pass
 
-            conn = get_connection()
-            c = conn.cursor()
+            conn5 = get_connection()
+            c5 = conn5.cursor()
             if has_next:
-                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scraped_page', ?)", (str(page_num),))
-                cb(status_callback, f"Page {page_num} done. Next sync will scrape page {page_num + 1}.")
+                c5.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scraped_page', ?)", (str(start_page),))
+                cb(status_callback, f"Page {start_page} done. Next sync → page {start_page + 1}.")
             else:
-                c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+                c5.execute("DELETE FROM settings WHERE key='last_scraped_page'")
                 cb(status_callback, "All pages scraped! Next sync restarts from page 1.")
-            conn.commit()
-            conn.close()
+            conn5.commit()
+            conn5.close()
 
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
@@ -430,11 +437,24 @@ def save_lead(lead):
         email = lead.get("email", "").strip()
         phone = lead.get("phone", "").strip()
         policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip()
+        address = lead.get("address", "").strip()
 
-        c.execute("""
-            INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        if email:
+            # Has email — use email as unique key
+            c.execute("""
+                INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        else:
+            # No email — use name+address as unique key to avoid duplicates
+            c.execute("SELECT id FROM leads WHERE full_name=? AND (email IS NULL OR email='') AND source='planetaltig.com' AND policy_status=?", (name, policy_status))
+            if c.fetchone():
+                return False
+            c.execute("""
+                INSERT INTO leads (full_name, email, phone, policy_status, source, date_scraped)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, "", phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
         inserted = c.rowcount > 0
         conn.commit()
         return inserted

@@ -29,12 +29,6 @@ function renderNav(active) {
       <div id="page-content"></div>
     </main>
   `);
-
-  setInterval(() => {
-    apiFetch("/api/status").then(r => r.json()).then(d => {
-      document.getElementById("status-bar").textContent = d.message;
-    }).catch(() => {});
-  }, 2000);
 }
 
 function logout() {
