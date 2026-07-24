@@ -9,6 +9,8 @@ TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 
 def get_connection():
+    if not TURSO_URL or not TURSO_TOKEN:
+        raise RuntimeError("TURSO_DATABASE_URL and TURSO_AUTH_TOKEN env vars must be set")
     return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
 
 
