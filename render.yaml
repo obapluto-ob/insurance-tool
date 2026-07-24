@@ -9,3 +9,19 @@ services:
         value: 3.12.0
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: .playwright-browsers
+      - key: PORTAL_URL
+        sync: false
+      - key: PORTAL_USERNAME
+        sync: false
+      - key: PORTAL_PASSWORD
+        sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: APP_USERNAME
+        sync: false
+      - key: APP_PASSWORD
+        sync: false

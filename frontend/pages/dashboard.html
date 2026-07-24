@@ -62,6 +62,7 @@
     document.getElementById("log-panel").style.display = "none";
     clearInterval(logInterval);
     logInterval = null;
+    load();
   }
 
   function appendLog(msg) {
@@ -75,6 +76,7 @@
   }
 
   function startLogPolling() {
+    let doneOnce = false;
     logInterval = setInterval(async () => {
       const res = await apiFetch("/api/status");
       const d = await res.json();
@@ -83,12 +85,13 @@
         appendLog(logs[i]);
       }
       seenLogs = logs.length;
-      if (!d.running && seenLogs >= logs.length && logs.length > 0) {
+      if (!d.running && logs.length > 0 && !doneOnce) {
+        doneOnce = true;
         clearInterval(logInterval);
         logInterval = null;
-        document.getElementById("sync-btn").textContent = "Sync Portal";
-        document.getElementById("sync-btn").disabled = false;
-        load();
+        appendLog("--- Sync finished. Close this panel when ready. ---");
+        const btn = document.getElementById("sync-btn");
+        if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
       }
     }, 1000);
   }
