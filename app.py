@@ -20,7 +20,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    "https://insurance-tool.onrender.com",
+    "https://donas-insurance-api.onrender.com",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000"
+])
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
 APP_PIN = os.getenv("APP_PIN", "0518")
@@ -132,12 +137,12 @@ def dashboard():
         c.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(category='NO_POLICY') as no_policy,
-                SUM(category='POS') as pos,
-                SUM(category='SGLW') as sglw,
-                SUM(category='ACTIVE') as active,
-                SUM(email_sent=1) as emailed,
-                SUM(response_received=1) as responses
+                SUM(CASE WHEN category='NO_POLICY' THEN 1 ELSE 0 END) as no_policy,
+                SUM(CASE WHEN category='POS' THEN 1 ELSE 0 END) as pos,
+                SUM(CASE WHEN category='SGLW' THEN 1 ELSE 0 END) as sglw,
+                SUM(CASE WHEN category='ACTIVE' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN email_sent=1 THEN 1 ELSE 0 END) as emailed,
+                SUM(CASE WHEN response_received=1 THEN 1 ELSE 0 END) as responses
             FROM leads
         """)
         row = c.fetchone()
