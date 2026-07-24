@@ -15,8 +15,16 @@
   renderNav("Responses");
 
   async function load() {
-    const res = await apiFetch("/api/responses");
-    const data = await res.json();
+    let data;
+    try {
+      const res = await apiFetch("/api/responses");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      data = await res.json();
+    } catch (err) {
+      console.error("[responses] load failed:", err);
+      document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load responses. Check console (F12).</div>`;
+      return;
+    }
 
     const cards = data.length ? data.map(r => `
       <div class="response-card">

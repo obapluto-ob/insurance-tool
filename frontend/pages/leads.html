@@ -26,8 +26,16 @@
   };
 
   async function load() {
-    const res = await apiFetch(`/api/leads?category=${category}`);
-    const leads = await res.json();
+    let leads;
+    try {
+      const res = await apiFetch(`/api/leads?category=${category}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      leads = await res.json();
+    } catch (err) {
+      console.error("[leads] load failed:", err);
+      document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load leads. Check console (F12).</div>`;
+      return;
+    }
 
     const noEmail = leads.filter(l => !l.email).length;
     const templates = TEMPLATES[category] || TEMPLATES["ALL"];

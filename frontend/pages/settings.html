@@ -15,14 +15,20 @@
   renderNav("Settings");
 
   async function load() {
-    const [sRes, sigRes, tplRes] = await Promise.all([
-      apiFetch("/api/settings"),
-      apiFetch("/api/signature"),
-      apiFetch("/api/templates"),
-    ]);
-    const s = await sRes.json();
-    const sig = await sigRes.json();
-    const tpl = await tplRes.json();
+    let s, sig, tpl;
+    try {
+      const [sRes, sigRes, tplRes] = await Promise.all([
+        apiFetch("/api/settings"),
+        apiFetch("/api/signature"),
+        apiFetch("/api/templates"),
+      ]);
+      if (!sRes.ok || !sigRes.ok || !tplRes.ok) throw new Error(`HTTP ${sRes.status}/${sigRes.status}/${tplRes.status}`);
+      [s, sig, tpl] = await Promise.all([sRes.json(), sigRes.json(), tplRes.json()]);
+    } catch (err) {
+      console.error("[settings] load failed:", err);
+      document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load settings. Check console (F12).</div>`;
+      return;
+    }
 
     document.getElementById("page-content").innerHTML = `
       <div class="page-header"><h1>Settings</h1></div>
