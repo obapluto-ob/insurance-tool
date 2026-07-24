@@ -168,7 +168,8 @@ main.with-sidebar {
 .stat-card.yellow .stat-number { color: #f59e0b; }
 .stat-card.blue .stat-number { color: #3b82f6; }
 .stat-card.green .stat-number { color: #22c55e; }
-.stat-card.purple .stat-number { color: #a855f7; }
+.stat-card.grey .stat-number { color: #6b7280; }
+.tag-active { background: #1a1a2e; color: #6b7280; }
 
 /* ── Quick Actions ── */
 .quick-actions {

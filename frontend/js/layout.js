@@ -5,6 +5,7 @@ function renderNav(active) {
     { href: "leads.html?category=NO_POLICY", label: "No Policy" },
     { href: "leads.html?category=POS", label: "POS" },
     { href: "leads.html?category=SGLW", label: "SGLW" },
+    { href: "leads.html?category=ACTIVE", label: "Active Policy" },
     { href: "responses.html", label: "Responses" },
     { href: "settings.html", label: "Settings" },
   ];

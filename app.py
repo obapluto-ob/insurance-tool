@@ -115,6 +115,7 @@ def dashboard():
         ("no_policy", "SELECT COUNT(*) FROM leads WHERE category='NO_POLICY'"),
         ("pos", "SELECT COUNT(*) FROM leads WHERE category='POS'"),
         ("sglw", "SELECT COUNT(*) FROM leads WHERE category='SGLW'"),
+        ("active", "SELECT COUNT(*) FROM leads WHERE category='ACTIVE'"),
         ("emailed", "SELECT COUNT(*) FROM leads WHERE email_sent=1"),
         ("responses", "SELECT COUNT(*) FROM leads WHERE response_received=1"),
     ]:
