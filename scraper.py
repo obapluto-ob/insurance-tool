@@ -79,7 +79,7 @@ def run_scraper(status_callback=None):
             if not filled_pass:
                 cb(status_callback, "WARNING: Could not fill password field")
 
-            # Submit
+            # Submit - try multiple approaches
             submitted = False
             for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Sign In')", "button:has-text('Log In')"]:
                 try:
@@ -90,9 +90,20 @@ def run_scraper(status_callback=None):
                 except:
                     continue
             if not submitted:
-                cb(status_callback, "WARNING: Could not find submit button")
+                # fallback: press Enter on password field
+                try:
+                    page.press("input[name='Password']", "Enter")
+                    cb(status_callback, "Submitted via Enter key on password field")
+                    submitted = True
+                except:
+                    cb(status_callback, "WARNING: Could not find submit button")
 
-            page.wait_for_timeout(5000)
+            # Wait for navigation
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except:
+                pass
+            page.wait_for_timeout(3000)
             cb(status_callback, f"After login - URL: {page.url}")
             cb(status_callback, f"After login - Title: {page.title()}")
 
@@ -109,6 +120,13 @@ def run_scraper(status_callback=None):
             try:
                 alias_val = page.input_value("input[name='Alias']")
                 cb(status_callback, f"Alias field value after submit: '{alias_val}'")
+            except:
+                pass
+
+            # Dump full page text to see what the portal shows
+            try:
+                body_text = page.inner_text("body")[:800]
+                cb(status_callback, f"Page body after login attempt: {body_text}")
             except:
                 pass
 
