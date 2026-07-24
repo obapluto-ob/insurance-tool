@@ -365,12 +365,18 @@ body.login-page {
   box-shadow: 0 0 8px rgba(59,130,246,0.6);
 }
 
-.pin-error {
-  color: #ef4444;
-  font-size: 12px;
+.pin-status {
+  font-size: 13px;
+  font-weight: 600;
   margin: 8px 0 16px;
-  min-height: 18px;
+  min-height: 20px;
+  transition: all 0.2s;
 }
+.pin-status-verifying { color: #9aa3b2; }
+.pin-status-ok   { color: #22c55e; }
+.pin-status-error { color: #ef4444; }
+
+.pin-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
 .pin-pad {
   display: grid;

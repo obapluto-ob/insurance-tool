@@ -31,7 +31,7 @@
         <div class="pin-dot" id="d3"></div>
       </div>
 
-      <div id="pin-error" class="pin-error" style="display:none">Incorrect PIN. Try again.</div>
+      <div id="pin-status" class="pin-status" style="display:none"></div>
 
       <div class="pin-pad">
         <button class="pin-btn" onclick="pressPin('1')">1</button>
@@ -82,24 +82,52 @@
     }
 
     async function submitPin() {
-      const res = await fetch(`${API}/api/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin })
-      });
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem("token", data.token);
-        window.location.href = "pages/dashboard.html";
-      } else {
-        const err = document.getElementById("pin-error");
-        err.style.display = "block";
-        pin = "";
-        updateDots();
-        // shake animation
-        document.querySelector(".pin-display").classList.add("shake");
-        setTimeout(() => document.querySelector(".pin-display").classList.remove("shake"), 500);
+      // disable pad and show verifying
+      setPadDisabled(true);
+      showStatus("Verifying...", "verifying");
+
+      try {
+        const res = await fetch(`${API}/api/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin })
+        });
+        const data = await res.json();
+        if (data.token) {
+          showStatus("✓ Confirmed", "ok");
+          localStorage.setItem("token", data.token);
+          setTimeout(() => { window.location.href = "pages/dashboard.html"; }, 600);
+        } else {
+          showStatus("✗ Incorrect PIN", "error");
+          document.querySelector(".pin-display").classList.add("shake");
+          setTimeout(() => {
+            document.querySelector(".pin-display").classList.remove("shake");
+            showStatus("", "");
+            setPadDisabled(false);
+            pin = "";
+            updateDots();
+          }, 1200);
+        }
+      } catch (err) {
+        showStatus("✗ Connection failed", "error");
+        setTimeout(() => {
+          showStatus("", "");
+          setPadDisabled(false);
+          pin = "";
+          updateDots();
+        }, 1500);
       }
+    }
+
+    function showStatus(msg, type) {
+      const el = document.getElementById("pin-status");
+      el.textContent = msg;
+      el.className = "pin-status" + (type ? " pin-status-" + type : "");
+      el.style.display = msg ? "block" : "none";
+    }
+
+    function setPadDisabled(disabled) {
+      document.querySelectorAll(".pin-btn").forEach(b => b.disabled = disabled);
     }
 
     // keyboard support
