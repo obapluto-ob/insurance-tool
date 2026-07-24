@@ -20,12 +20,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, origins=[
-    "https://insurance-tool.onrender.com",
-    "https://donas-insurance-api.onrender.com",
-    "http://localhost:5000",
-    "http://127.0.0.1:5000"
-])
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
 APP_PIN = os.getenv("APP_PIN", "0518")
