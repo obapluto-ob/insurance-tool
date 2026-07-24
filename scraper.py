@@ -31,12 +31,16 @@ def is_cancelled():
 def login(page, context, session_cookie, status_callback):
     import json
 
-    # First try saved browser cookies from previous successful login
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
-    row = c.fetchone()
-    conn.close()
+    # First try cookies from env var (survives Render restarts), then DB
+    import json
+    cookie_json = os.getenv("BROWSER_COOKIES")
+    if not cookie_json:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
+        row = c.fetchone()
+        conn.close()
+        cookie_json = row[0] if row else None
 
     # Navigate first so the domain is set, then inject cookies and reload
     page.goto(PORTAL_URL, timeout=30000)
@@ -45,9 +49,9 @@ def login(page, context, session_cookie, status_callback):
     except:
         pass
 
-    if row:
+    if cookie_json:
         try:
-            saved_cookies = json.loads(row[0])
+            saved_cookies = json.loads(cookie_json)
             context.add_cookies(saved_cookies)
             cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies. Reloading...")
             page.reload(timeout=30000)
@@ -140,18 +144,47 @@ def login(page, context, session_cookie, status_callback):
 
 
 def _save_cookies(context, status_callback=None):
+    import json
     try:
-        import json
         cookies = context.cookies()
+        cookie_json = json.dumps(cookies)
+
+        # Save to DB
         conn = get_connection()
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                  ("browser_cookies", json.dumps(cookies)))
+                  ("browser_cookies", cookie_json))
         conn.commit()
         conn.close()
+
+        # Save to memory so current process reuses it
+        os.environ["BROWSER_COOKIES"] = cookie_json
+
+        # Persist to Render env var so it survives restarts
+        _push_cookies_to_render(cookie_json, status_callback)
+
         cb(status_callback, f"Session saved ({len(cookies)} cookies). Next sync will skip login.")
     except Exception as e:
         cb(status_callback, f"Could not save session: {e}")
+
+
+def _push_cookies_to_render(cookie_json, status_callback=None):
+    import urllib.request
+    service_id = os.getenv("RENDER_SERVICE_ID")
+    api_key = os.getenv("RENDER_API_KEY")
+    if not service_id or not api_key:
+        return
+    try:
+        import json as _json
+        url = f"https://api.render.com/v1/services/{service_id}/env-vars"
+        # Render expects the full list of env vars to update
+        payload = _json.dumps([{"key": "BROWSER_COOKIES", "value": cookie_json}]).encode()
+        req = urllib.request.Request(url, data=payload, method="PUT")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        cb(status_callback, f"Note: Could not persist cookies to Render ({e})")
 
 
 def run_scraper(status_callback=None):
@@ -170,15 +203,7 @@ def run_scraper(status_callback=None):
     conn.close()
     session_cookie = row[0] if row else None
 
-    has_saved = False
-    try:
-        conn2 = get_connection()
-        c2 = conn2.cursor()
-        c2.execute("SELECT value FROM settings WHERE key='browser_cookies'")
-        has_saved = bool(c2.fetchone())
-        conn2.close()
-    except:
-        pass
+    has_saved = bool(os.getenv("BROWSER_COOKIES"))
 
     cb(status_callback, "Starting browser...")
     method = 'Saved session' if has_saved else ('Session Cookie' if session_cookie else 'Username/Password')
