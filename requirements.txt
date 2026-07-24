@@ -4,4 +4,4 @@ gunicorn
 playwright
 python-dotenv
 pyjwt
-libsql
+requests
