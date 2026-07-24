@@ -3,6 +3,8 @@ import os
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "leads.db")
 
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
