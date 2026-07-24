@@ -44,7 +44,7 @@
             <option>Plus Leads</option>
           </select>
           <button class="btn btn-secondary" onclick="selectNoPolicy()">✅ Select No Policy</button>
-          <button class="btn btn-primary" onclick="sendSelected()">📧 Send to Selected</button>
+          <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">📧 Send to Selected</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -72,17 +72,19 @@
     });
   }
 
-  async function sendSelected() {
+  async function sendSelected(btn) {
     const ids = [...document.querySelectorAll(".lead-check:checked")].map(c => parseInt(c.dataset.id));
     if (!ids.length) { alert("Please select at least one lead."); return; }
     const template = document.getElementById("template-select").value;
     if (!confirm(`Send "${template}" to ${ids.length} lead(s)?`)) return;
-    document.getElementById("status-bar").textContent = "📧 Sending emails...";
+    btn.textContent = "⏳ Sending...";
+    btn.disabled = true;
+    document.getElementById("status-bar").textContent = `📧 Sending ${template} to ${ids.length} leads...`;
     await apiFetch("/api/send", {
       method: "POST",
       body: JSON.stringify({ ids, template })
     });
-    setTimeout(load, 5000);
+    setTimeout(() => { load(); }, 8000);
   }
 
   load();

@@ -21,8 +21,8 @@
       <div class="page-header">
         <h1>Dashboard</h1>
         <div class="actions">
-          <button class="btn btn-primary" onclick="syncPortal()">🔄 Sync Portal</button>
-          <button class="btn btn-secondary" onclick="checkReplies()">📬 Check Replies</button>
+          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">🔄 Sync Portal</button>
+          <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">📬 Check Replies</button>
         </div>
       </div>
       <div class="stats-grid">
@@ -41,16 +41,20 @@
     `;
   }
 
-  async function syncPortal() {
-    document.getElementById("status-bar").textContent = "🔄 Syncing portal...";
+  async function syncPortal(btn) {
+    btn.textContent = "⏳ Syncing...";
+    btn.disabled = true;
+    document.getElementById("status-bar").textContent = "🔄 Syncing portal... this may take a minute";
     await apiFetch("/api/sync");
-    setTimeout(load, 8000);
+    setTimeout(() => { load(); }, 20000);
   }
 
-  async function checkReplies() {
-    document.getElementById("status-bar").textContent = "📬 Checking replies...";
+  async function checkReplies(btn) {
+    btn.textContent = "⏳ Checking...";
+    btn.disabled = true;
+    document.getElementById("status-bar").textContent = "📬 Checking Gmail for replies...";
     await apiFetch("/api/check_replies");
-    setTimeout(load, 5000);
+    setTimeout(() => { load(); }, 8000);
   }
 
   load();
