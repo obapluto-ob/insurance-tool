@@ -44,7 +44,10 @@
       <div id="log-panel" class="log-panel" style="display:none">
         <div class="log-header">
           <span id="log-title">Sync Log</span>
-          <button class="log-close" onclick="closeLog()">Close</button>
+          <div style="display:flex;gap:8px">
+            <button class="log-cancel" id="cancel-btn" onclick="cancelSync()">Stop Sync</button>
+            <button class="log-close" onclick="closeLog()">Close</button>
+          </div>
         </div>
         <div id="log-body" class="log-body"></div>
       </div>
@@ -120,6 +123,13 @@
         }
       } catch {}
     }, 1500);
+  }
+
+  async function cancelSync() {
+    const btn = document.getElementById("cancel-btn");
+    if (btn) { btn.textContent = "Stopping..."; btn.disabled = true; }
+    await apiFetch("/api/cancel", { method: "POST" });
+    appendLog("Stop requested...");
   }
 
   async function syncPortal(btn) {

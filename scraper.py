@@ -19,6 +19,15 @@ def cb(status_callback, msg):
         status_callback(msg)
 
 
+def is_cancelled():
+    try:
+        from app import task_status
+        return task_status.get("cancel", False)
+    except:
+        return False
+
+
+
 def login(page, context, session_cookie, status_callback):
     import json
 
@@ -187,8 +196,14 @@ def run_scraper(status_callback=None):
 
             leads_data = []
             page_num = 1
+            tag_samples = set()
 
             while True:
+                if is_cancelled():
+                    cb(status_callback, "Sync cancelled.")
+                    browser.close()
+                    return 0
+
                 cb(status_callback, f"Scraping page {page_num}...")
 
                 # Wait for table rows
@@ -229,6 +244,7 @@ def run_scraper(status_callback=None):
                             "lead_type": lead_type,
                             "detail_url": detail_url,
                         })
+                        tag_samples.add(lead_tags[:40] if lead_tags else "(empty)")
                     except:
                         continue
 
@@ -247,12 +263,25 @@ def run_scraper(status_callback=None):
                 except:
                     break
 
-            cb(status_callback, f"Collected {len(leads_data)} leads from inbox. Fetching details...")
+            cb(status_callback, f"Collected {len(leads_data)} leads from inbox.")
+            cb(status_callback, f"Unique lead_tags found: {list(tag_samples)[:20]}")
+            # Report missing fields
+            missing_name = sum(1 for l in leads_data if not l.get("name") or l["name"] == "Unknown")
+            missing_tags = sum(1 for l in leads_data if not l.get("lead_tags"))
+            if missing_name:
+                cb(status_callback, f"Warning: {missing_name} leads have no name")
+            if missing_tags:
+                cb(status_callback, f"Warning: {missing_tags} leads have no lead_tags — will be saved as NO_POLICY")
+            cb(status_callback, "Fetching details for first 50 leads...")
 
             # Fetch email from each lead detail page (first 50 to avoid timeout)
             saved = 0
             fetch_limit = min(len(leads_data), 50)
             for i, lead in enumerate(leads_data[:fetch_limit]):
+                if is_cancelled():
+                    cb(status_callback, "Sync cancelled during detail fetch.")
+                    browser.close()
+                    return saved
                 try:
                     if lead.get("detail_url"):
                         detail_url = "https://www.planetaltig.com" + lead["detail_url"] if lead["detail_url"].startswith("/") else lead["detail_url"]

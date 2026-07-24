@@ -35,7 +35,7 @@ def _load_saved_settings():
 
 _load_saved_settings()
 
-task_status = {"message": "Ready.", "running": False, "logs": []}
+task_status = {"message": "Ready.", "running": False, "logs": [], "cancel": False}
 
 
 # ── Auth ──────────────────────────────────────────────
@@ -71,11 +71,13 @@ def run_task(fn, *args):
     def wrapper():
         task_status["running"] = True
         task_status["logs"] = []
+        task_status["cancel"] = False
         def cb(msg):
             task_status["message"] = msg
             task_status["logs"].append(msg)
         fn(cb, *args)
         task_status["running"] = False
+        task_status["cancel"] = False
     threading.Thread(target=wrapper, daemon=True).start()
 
 def scraper_task(cb):
@@ -158,6 +160,15 @@ def sync():
 @protected
 def check_replies_route():
     run_task(replies_task)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cancel", methods=["POST"])
+@protected
+def cancel():
+    task_status["cancel"] = True
+    task_status["logs"].append("Sync cancelled by user.")
+    task_status["message"] = "Cancelled."
     return jsonify({"ok": True})
 
 

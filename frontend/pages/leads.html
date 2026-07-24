@@ -17,43 +17,64 @@
   const params = new URLSearchParams(window.location.search);
   const category = params.get("category") || "ALL";
 
+  // Templates allowed per category
+  const TEMPLATES = {
+    "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+    "POS":       ["Will Kit", "Plus Leads"],
+    "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+    "ALL":       ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+  };
+
   async function load() {
     const res = await apiFetch(`/api/leads?category=${category}`);
     const leads = await res.json();
 
-    const rows = leads.map(l => `
-      <tr>
-        <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}"/></td>
-        <td>${l.full_name || "—"}</td>
-        <td>${l.email || "—"}</td>
-        <td>${l.phone || "—"}</td>
-        <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
-        <td>${l.policy_status || "—"}</td>
-        <td>${l.email_sent ? "<span class=\"status-yes\">Sent</span>" : "<span class=\"status-no\">No</span>"}</td>
-        <td>${l.response_received ? "<span class=\"status-yes\">Yes</span>" : "<span class=\"status-no\">—</span>"}</td>
-      </tr>
-    `).join("") || `<tr><td colspan="8" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
+    const noEmail = leads.filter(l => !l.email).length;
+    const templates = TEMPLATES[category] || TEMPLATES["ALL"];
+
+    const rows = leads.map(l => {
+      const missingEmail = !l.email;
+      const missingName = !l.full_name || l.full_name === "Unknown";
+      const missingStatus = !l.policy_status || l.policy_status === "Unknown";
+      const flags = [
+        missingEmail ? "<span class='flag-missing'>No Email</span>" : "",
+        missingName  ? "<span class='flag-missing'>No Name</span>"  : "",
+      ].filter(Boolean).join(" ");
+
+      return `
+        <tr class="${missingEmail ? 'row-no-email' : ''}">
+          <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}" ${missingEmail ? 'disabled title="No email address"' : ''}/></td>
+          <td>${l.full_name || "<span class='flag-missing'>Missing</span>"}</td>
+          <td>${l.email || "<span class='flag-missing'>Missing</span>"}</td>
+          <td>${l.phone || "—"}</td>
+          <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
+          <td>${l.policy_status && l.policy_status !== "Unknown" ? l.policy_status : "<span class='flag-missing'>Missing</span>"}</td>
+          <td>${l.email_sent ? "<span class='status-yes'>Sent</span>" : "<span class='status-no'>No</span>"}</td>
+          <td>${l.response_received ? "<span class='status-yes'>Yes</span>" : "—"}</td>
+          <td>${flags}</td>
+        </tr>
+      `;
+    }).join("") || `<tr><td colspan="9" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
 
     document.getElementById("page-content").innerHTML = `
       <div class="page-header">
         <h1>Leads <span class="badge">${leads.length}</span> ${category !== "ALL" ? `<span class="badge-cat">${category}</span>` : ""}</h1>
         <div class="actions">
           <select id="template-select" class="select-input">
-            <option>Will Kit</option>
-            <option>McGruff Child Safe Kit</option>
-            <option>Plus Leads</option>
+            ${templates.map(t => `<option>${t}</option>`).join("")}
           </select>
-          <button class="btn btn-secondary" onclick="selectNoPolicy()">Select No Policy</button>
+          <button class="btn btn-secondary" onclick="selectEmailable()">Select Emailable</button>
           <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">Send to Selected</button>
         </div>
       </div>
+      ${noEmail ? `<div class="info-bar">${noEmail} lead(s) have no email address and cannot be selected.</div>` : ""}
       <div class="table-wrap">
         <table class="leads-table">
           <thead>
             <tr>
               <th><input type="checkbox" onclick="toggleAll(this)"/></th>
               <th>Name</th><th>Email</th><th>Phone</th>
-              <th>Category</th><th>Policy Status</th><th>Emailed</th><th>Response</th>
+              <th>Category</th><th>Policy Status</th><th>Emailed</th><th>Response</th><th>Flags</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -63,12 +84,14 @@
   }
 
   function toggleAll(cb) {
-    document.querySelectorAll(".lead-check").forEach(c => c.checked = cb.checked);
+    document.querySelectorAll(".lead-check:not(:disabled)").forEach(c => c.checked = cb.checked);
   }
 
-  function selectNoPolicy() {
-    document.querySelectorAll(".lead-check").forEach(c => {
-      c.checked = c.dataset.category === "NO_POLICY";
+  // Select all leads that have email and are in emailable categories
+  function selectEmailable() {
+    document.querySelectorAll(".lead-check:not(:disabled)").forEach(c => {
+      const cat = c.dataset.category;
+      c.checked = ["NO_POLICY", "POS", "SGLW"].includes(cat);
     });
   }
 
