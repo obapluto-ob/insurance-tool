@@ -21,7 +21,5 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
-      - key: APP_USERNAME
-        sync: false
-      - key: APP_PASSWORD
-        sync: false
+      - key: APP_PIN
+        value: "0518"

@@ -16,8 +16,8 @@ app = Flask(__name__)
 CORS(app)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
-APP_USERNAME = os.getenv("APP_USERNAME", "dona")
-APP_PASSWORD = os.getenv("APP_PASSWORD", "dona1234")
+APP_PIN = os.getenv("APP_PIN", "0518")
+
 
 init_db()
 
@@ -40,7 +40,7 @@ task_status = {"message": "Ready.", "running": False, "logs": []}
 
 # ── Auth ──────────────────────────────────────────────
 def make_token():
-    payload = {"user": APP_USERNAME, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
+    payload = {"user": "dona", "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 
@@ -96,9 +96,10 @@ def send_task(cb, leads, template):
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json()
-    if data.get("username") == APP_USERNAME and data.get("password") == APP_PASSWORD:
+    pin = data.get("pin", "")
+    if pin == APP_PIN:
         return jsonify({"token": make_token()})
-    return jsonify({"error": "Invalid credentials"}), 401
+    return jsonify({"error": "Incorrect PIN"}), 401
 
 
 @app.route("/api/dashboard")

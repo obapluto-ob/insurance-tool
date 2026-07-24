@@ -3,44 +3,110 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Login – Dona's Tool</title>
+  <title>Dona's Insurance Tool</title>
   <link rel="stylesheet" href="css/style.css"/>
 </head>
 <body class="login-page">
-  <div class="login-box">
-    <div class="login-logo">🛡️</div>
-    <h2>Dona's Insurance Tool</h2>
-    <p class="login-sub">Sign in to your account</p>
-    <div id="error" class="alert" style="display:none"></div>
-    <form id="login-form">
-      <input type="text" id="username" placeholder="Username" required autofocus/>
-      <input type="password" id="password" placeholder="Password" required/>
-      <button type="submit">Sign In</button>
-    </form>
+
+  <div class="login-wrap">
+    <div class="pulse-ring"></div>
+    <div class="pulse-ring delay"></div>
+
+    <div class="login-card">
+      <div class="login-brand">
+        <svg class="brand-icon" viewBox="0 0 40 40" fill="none">
+          <path d="M20 4 L34 10 L34 22 C34 30 20 38 20 38 C20 38 6 30 6 22 L6 10 Z" fill="#1e2535" stroke="#3b82f6" stroke-width="1.5"/>
+          <polyline points="12,21 17,26 28,15" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <div class="brand-name">Dona's Tool</div>
+          <div class="brand-sub">Insurance Lead Manager</div>
+        </div>
+      </div>
+
+      <div class="pin-display">
+        <div class="pin-dot" id="d0"></div>
+        <div class="pin-dot" id="d1"></div>
+        <div class="pin-dot" id="d2"></div>
+        <div class="pin-dot" id="d3"></div>
+      </div>
+
+      <div id="pin-error" class="pin-error" style="display:none">Incorrect PIN. Try again.</div>
+
+      <div class="pin-pad">
+        <button class="pin-btn" onclick="pressPin('1')">1</button>
+        <button class="pin-btn" onclick="pressPin('2')">2</button>
+        <button class="pin-btn" onclick="pressPin('3')">3</button>
+        <button class="pin-btn" onclick="pressPin('4')">4</button>
+        <button class="pin-btn" onclick="pressPin('5')">5</button>
+        <button class="pin-btn" onclick="pressPin('6')">6</button>
+        <button class="pin-btn" onclick="pressPin('7')">7</button>
+        <button class="pin-btn" onclick="pressPin('8')">8</button>
+        <button class="pin-btn" onclick="pressPin('9')">9</button>
+        <button class="pin-btn pin-clear" onclick="clearPin()">Clear</button>
+        <button class="pin-btn" onclick="pressPin('0')">0</button>
+        <button class="pin-btn pin-del" onclick="deletePin()">&#9003;</button>
+      </div>
+    </div>
   </div>
+
   <script src="js/config.js"></script>
   <script>
     if (localStorage.getItem("token")) window.location.href = "pages/dashboard.html";
 
-    document.getElementById("login-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
+    let pin = "";
+
+    function pressPin(digit) {
+      if (pin.length >= 4) return;
+      pin += digit;
+      updateDots();
+      if (pin.length === 4) submitPin();
+    }
+
+    function deletePin() {
+      pin = pin.slice(0, -1);
+      updateDots();
+    }
+
+    function clearPin() {
+      pin = "";
+      updateDots();
+      document.getElementById("pin-error").style.display = "none";
+    }
+
+    function updateDots() {
+      for (let i = 0; i < 4; i++) {
+        const dot = document.getElementById("d" + i);
+        dot.classList.toggle("filled", i < pin.length);
+      }
+    }
+
+    async function submitPin() {
       const res = await fetch(`${API}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: document.getElementById("username").value,
-          password: document.getElementById("password").value
-        })
+        body: JSON.stringify({ pin })
       });
       const data = await res.json();
       if (data.token) {
         localStorage.setItem("token", data.token);
         window.location.href = "pages/dashboard.html";
       } else {
-        const err = document.getElementById("error");
-        err.textContent = data.error || "Invalid credentials.";
+        const err = document.getElementById("pin-error");
         err.style.display = "block";
+        pin = "";
+        updateDots();
+        // shake animation
+        document.querySelector(".pin-display").classList.add("shake");
+        setTimeout(() => document.querySelector(".pin-display").classList.remove("shake"), 500);
       }
+    }
+
+    // keyboard support
+    document.addEventListener("keydown", (e) => {
+      if (e.key >= "0" && e.key <= "9") pressPin(e.key);
+      if (e.key === "Backspace") deletePin();
+      if (e.key === "Escape") clearPin();
     });
   </script>
 </body>
