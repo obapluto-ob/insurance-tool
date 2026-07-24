@@ -214,6 +214,9 @@ def run_scraper(status_callback=None):
 
     conn = get_connection()
     c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='last_scraped_page'")
+    row = c.fetchone()
+    start_page = int(row[0]) + 1 if row else 1
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
     row = c.fetchone()
     conn.close()
@@ -221,6 +224,7 @@ def run_scraper(status_callback=None):
 
     has_saved = bool(os.getenv("BROWSER_COOKIES"))
     cb(status_callback, "Starting browser...")
+    cb(status_callback, f"Resuming from page {start_page}...")
     method = "Saved session" if has_saved else ("Session Cookie" if session_cookie else "Username/Password")
     cb(status_callback, f"Login method: {method}")
 
@@ -311,18 +315,49 @@ def run_scraper(status_callback=None):
                 pass
             cb(status_callback, f"Lead Inbox URL: {page.url}")
 
-            leads_data = []
-            tag_samples = set()
+            # Navigate to start_page by clicking Next until we get there
+            page_num = 1
+            while page_num < start_page:
+                try:
+                    next_btn = page.query_selector("a:has-text('Next')")
+                    if next_btn and next_btn.is_visible():
+                        next_btn.click()
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=8000)
+                        except:
+                            pass
+                        page_num += 1
+                    else:
+                        cb(status_callback, "All pages already scraped. Resetting to page 1.")
+                        conn = get_connection()
+                        c = conn.cursor()
+                        c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+                        conn.commit()
+                        conn.close()
+                        browser.close()
+                        return 0
+                except:
+                    break
+
+            if is_cancelled():
+                cb(status_callback, "Sync cancelled.")
+                browser.close()
+                return 0
+
+            cb(status_callback, f"Scraping page {page_num}...")
 
             try:
                 page.wait_for_selector("table tbody tr", timeout=8000)
             except:
-                cb(status_callback, "No table rows found.")
+                cb(status_callback, "No table rows found on this page.")
                 browser.close()
                 return 0
 
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} leads in inbox.")
+            cb(status_callback, f"Found {len(rows)} leads on page {page_num}.")
+
+            leads_data = []
+            tag_samples = set()
 
             for row in rows:
                 if is_cancelled():
@@ -353,12 +388,30 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
+            # Save progress — next sync picks up from next page
+            has_next = False
+            try:
+                next_btn = page.query_selector("a:has-text('Next')")
+                has_next = bool(next_btn and next_btn.is_visible())
+            except:
+                pass
+
+            conn = get_connection()
+            c = conn.cursor()
+            if has_next:
+                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scraped_page', ?)", (str(page_num),))
+                cb(status_callback, f"Page {page_num} done. Next sync will scrape page {page_num + 1}.")
+            else:
+                c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
+                cb(status_callback, "All pages scraped! Next sync restarts from page 1.")
+            conn.commit()
+            conn.close()
+
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
-            cb(status_callback, f"Saved {new_leads} new leads. {with_email}/{len(leads_data)} have emails.")
-            cb(status_callback, f"Sample lead_tags: {list(tag_samples)[:10]}")
+            cb(status_callback, f"Scraped {len(leads_data)} | New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
             type_samples = set(l["lead_type"] for l in leads_data if l.get("lead_type"))
-            cb(status_callback, f"Unique lead_type values: {list(type_samples)[:20]}")
+            cb(status_callback, f"lead_type values: {list(type_samples)}")
 
             browser.close()
             return new_leads

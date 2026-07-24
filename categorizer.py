@@ -3,28 +3,31 @@ from database import get_connection
 # Exact lead_type values from planetaltig.com portal
 POS_KEYWORDS = ["pos"]
 SGLW_KEYWORDS = ["union"]
-# These are prospects to email — no policy yet
-PROSPECT_KEYWORDS = ["will kit", "mcgruff", "childsafe", "plus lead", "new address", "appointment"]
+ACTIVE_KEYWORDS = ["upcoming appointment"]
+PROSPECT_KEYWORDS = ["will kit", "mcgruff", "childsafe", "plus lead", "new address", "no appointment", "past appointment"]
 
 EMAILABLE_TEMPLATES = {
     "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
     "POS":       ["Will Kit", "Plus Leads"],
     "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+    "ACTIVE":    ["Will Kit", "Plus Leads"],
 }
 
 
 def categorize_lead(policy_status: str) -> str:
     status = (policy_status or "").lower().strip()
 
-    for kw in POS_KEYWORDS:
+    if status == "pos":
+        return "POS"
+
+    for kw in ACTIVE_KEYWORDS:
         if kw in status:
-            return "POS"
+            return "ACTIVE"
 
     for kw in SGLW_KEYWORDS:
         if kw in status:
             return "SGLW"
 
-    # Anything with appointment/will kit/plus lead/mcgruff = prospect = NO_POLICY
     for kw in PROSPECT_KEYWORDS:
         if kw in status:
             return "NO_POLICY"
@@ -42,7 +45,7 @@ def categorize_all_leads(status_callback=None):
     c.execute("SELECT id, policy_status FROM leads")
     rows = c.fetchall()
 
-    counts = {"NO_POLICY": 0, "POS": 0, "SGLW": 0}
+    counts = {"NO_POLICY": 0, "POS": 0, "SGLW": 0, "ACTIVE": 0}
 
     for lead_id, policy_status in rows:
         category = categorize_lead(policy_status or "")
@@ -54,7 +57,7 @@ def categorize_all_leads(status_callback=None):
 
     total = sum(counts.values())
     if status_callback:
-        status_callback(f"Categorized {total} leads — NO_POLICY: {counts['NO_POLICY']} | POS: {counts['POS']} | SGLW: {counts['SGLW']}")
+        status_callback(f"Categorized {total} leads — NO_POLICY: {counts['NO_POLICY']} | POS: {counts['POS']} | SGLW: {counts['SGLW']} | ACTIVE: {counts['ACTIVE']}")
 
     return total
 
