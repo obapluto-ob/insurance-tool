@@ -27,12 +27,30 @@ def is_cancelled():
         return False
 
 
+def _parse_lead_tags(lead_tags):
+    """Extract email and DOB from lead_tags field. Returns (email, dob, clean_tags)"""
+    email = ""
+    dob = ""
+    clean_lines = []
+    for line in lead_tags.replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("email:"):
+            val = line[6:].strip()
+            if "@" in val:
+                email = val
+        elif low.startswith("dob :") or low.startswith("dob:"):
+            dob = line.split(":", 1)[1].strip()
+        else:
+            clean_lines.append(line)
+    return email, dob, " | ".join(clean_lines)
+
 
 def login(page, context, session_cookie, status_callback):
     import json
 
-    # First try cookies from env var (survives Render restarts), then DB
-    import json
     cookie_json = os.getenv("BROWSER_COOKIES")
     if not cookie_json:
         conn = get_connection()
@@ -42,7 +60,7 @@ def login(page, context, session_cookie, status_callback):
         conn.close()
         cookie_json = row[0] if row else None
 
-    # Navigate first so the domain is set, then inject cookies and reload
+    # Navigate first so domain is set, then inject cookies and reload
     page.goto(PORTAL_URL, timeout=30000)
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
@@ -81,15 +99,17 @@ def login(page, context, session_cookie, status_callback):
         cb(status_callback, "Manual session cookie expired. Get a fresh one from Settings.")
         return False
 
-    # Saved browser cookies expired — clear and fall back to password
+    # Clear expired cookies and fall back to password
     try:
         conn = get_connection()
         c = conn.cursor()
         c.execute("DELETE FROM settings WHERE key='browser_cookies'")
         conn.commit()
         conn.close()
+        os.environ.pop("BROWSER_COOKIES", None)
     except:
         pass
+
     cb(status_callback, "Saved session expired. Logging in with username/password...")
     for selector in ["input[name='Alias']", "input[type='text']"]:
         try:
@@ -138,7 +158,6 @@ def login(page, context, session_cookie, status_callback):
         return False
 
     cb(status_callback, "Login successful.")
-    # Save all browser cookies to DB so next sync skips login
     _save_cookies(context, status_callback)
     return True
 
@@ -149,20 +168,14 @@ def _save_cookies(context, status_callback=None):
         cookies = context.cookies()
         cookie_json = json.dumps(cookies)
 
-        # Save to DB
         conn = get_connection()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                  ("browser_cookies", cookie_json))
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("browser_cookies", cookie_json))
         conn.commit()
         conn.close()
 
-        # Save to memory so current process reuses it
         os.environ["BROWSER_COOKIES"] = cookie_json
-
-        # Persist to Render env var so it survives restarts
         _push_cookies_to_render(cookie_json, status_callback)
-
         cb(status_callback, f"Session saved ({len(cookies)} cookies). Next sync will skip login.")
     except Exception as e:
         cb(status_callback, f"Could not save session: {e}")
@@ -175,7 +188,6 @@ def _push_cookies_to_render(cookie_json, status_callback=None):
     service_id = os.getenv("RENDER_SERVICE_ID")
     api_key = os.getenv("RENDER_API_KEY")
     if not service_id or not api_key:
-        cb(status_callback, "Note: RENDER_SERVICE_ID or RENDER_API_KEY not set — cookies won't survive restart")
         return
     try:
         url = f"https://api.render.com/v1/services/{service_id}/env-vars"
@@ -184,36 +196,14 @@ def _push_cookies_to_render(cookie_json, status_callback=None):
         req.add_header("Authorization", f"Bearer {api_key}")
         req.add_header("Content-Type", "application/json")
         resp = urllib.request.urlopen(req, timeout=10)
-        cb(status_callback, f"Cookies pushed to Render env var (status {resp.status}). Will survive restarts.")
+        cb(status_callback, f"Cookies pushed to Render env var (status {resp.status}).")
     except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        cb(status_callback, f"Render API error {e.code}: {body}")
+        cb(status_callback, f"Render API error {e.code}: {e.read().decode()}")
     except Exception as e:
         cb(status_callback, f"Could not push cookies to Render: {e}")
 
 
-def _parse_lead_tags(lead_tags):
-    """Extract email, DOB from lead_tags field. Returns (email, dob, clean_tags)"""
-    import re
-    email = ""
-    dob = ""
-    clean_lines = []
-    for line in lead_tags.replace("\r", "").split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        low = line.lower()
-        if low.startswith("email:"):
-            val = line[6:].strip()
-            if "@" in val:
-                email = val
-        elif low.startswith("dob :") or low.startswith("dob:"):
-            dob = line.split(":", 1)[1].strip()
-        else:
-            clean_lines.append(line)
-    return email, dob, " | ".join(clean_lines)
-
-
+def run_scraper(status_callback=None):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -230,9 +220,8 @@ def _parse_lead_tags(lead_tags):
     session_cookie = row[0] if row else None
 
     has_saved = bool(os.getenv("BROWSER_COOKIES"))
-
     cb(status_callback, "Starting browser...")
-    method = 'Saved session' if has_saved else ('Session Cookie' if session_cookie else 'Username/Password')
+    method = "Saved session" if has_saved else ("Session Cookie" if session_cookie else "Username/Password")
     cb(status_callback, f"Login method: {method}")
 
     with sync_playwright() as p:
@@ -255,9 +244,9 @@ def _parse_lead_tags(lead_tags):
                 pass
             cb(status_callback, f"Lead Inbox URL: {page.url}")
 
-            # --- Phase 1: scrape inbox table (fast, no detail pages) ---
             leads_data = []
             tag_samples = set()
+
             try:
                 page.wait_for_selector("table tbody tr", timeout=8000)
             except:
@@ -266,9 +255,13 @@ def _parse_lead_tags(lead_tags):
                 return 0
 
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} leads in inbox. Saving basic info...")
+            cb(status_callback, f"Found {len(rows)} leads in inbox.")
 
             for row in rows:
+                if is_cancelled():
+                    cb(status_callback, "Sync cancelled.")
+                    browser.close()
+                    return 0
                 try:
                     cells = row.query_selector_all("td")
                     if len(cells) < 5:
@@ -293,11 +286,10 @@ def _parse_lead_tags(lead_tags):
                 except:
                     continue
 
-            # Save all leads with emails parsed from tags
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
             cb(status_callback, f"Saved {new_leads} new leads. {with_email}/{len(leads_data)} have emails.")
-            cb(status_callback, f"Unique lead_tags: {list(tag_samples)[:10]}")
+            cb(status_callback, f"Sample lead_tags: {list(tag_samples)[:10]}")
             type_samples = set(l["lead_type"] for l in leads_data if l.get("lead_type"))
             cb(status_callback, f"Unique lead_type values: {list(type_samples)[:20]}")
 
@@ -318,7 +310,6 @@ def save_lead(lead):
         email = lead.get("email", "").strip()
         phone = lead.get("phone", "").strip()
         policy_status = lead.get("lead_tags", lead.get("lead_type", "Unknown")).strip()
-        address = lead.get("address", "").strip()
 
         c.execute("""
             INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
