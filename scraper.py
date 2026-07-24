@@ -10,6 +10,9 @@ PORTAL_URL = os.getenv("PORTAL_URL")
 USERNAME = os.getenv("PORTAL_USERNAME")
 PASSWORD = os.getenv("PORTAL_PASSWORD")
 
+BROWSER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".playwright-browsers")
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", BROWSER_PATH)
+
 
 def run_scraper(status_callback=None):
     try:
