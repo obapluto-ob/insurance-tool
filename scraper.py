@@ -236,6 +236,73 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
+            # ── PORTAL EXPLORER ──────────────────────────────────────────
+            cb(status_callback, "--- PORTAL EXPLORER: reading navigation ---")
+            try:
+                nav_links = page.query_selector_all("nav a, .navbar a, .sidebar a, .menu a, #nav a, ul.nav a")
+                seen_hrefs = set()
+                explore_urls = []
+                for link in nav_links:
+                    href = link.get_attribute("href") or ""
+                    text = link.inner_text().strip()
+                    if not href or href.startswith("#") or href.startswith("javascript"):
+                        continue
+                    if not href.startswith("http"):
+                        href = "https://www.planetaltig.com" + href
+                    if href not in seen_hrefs and "planetaltig.com" in href:
+                        seen_hrefs.add(href)
+                        explore_urls.append((text, href))
+                        cb(status_callback, f"  NAV LINK: [{text}] → {href}")
+
+                if not explore_urls:
+                    cb(status_callback, "  No nav links found — trying common portal paths...")
+                    for path in ["/Lead/Inbox", "/Lead/Active", "/Lead/All", "/Client", "/Client/Index",
+                                 "/Policy", "/Policy/Index", "/Member", "/Member/Index",
+                                 "/Lead/Index", "/Home", "/Dashboard"]:
+                        explore_urls.append((path, "https://www.planetaltig.com" + path))
+
+                for label, url in explore_urls:
+                    if is_cancelled():
+                        break
+                    try:
+                        page.goto(url, timeout=15000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=6000)
+                        except:
+                            pass
+                        actual_url = page.url
+                        if "login" in actual_url.lower():
+                            cb(status_callback, f"  [{label}] → redirected to login (needs auth)")
+                            continue
+
+                        # Read table headers
+                        headers = []
+                        header_els = page.query_selector_all("table thead th, table thead td")
+                        for h in header_els:
+                            headers.append(h.inner_text().strip())
+
+                        # Read first data row
+                        first_row_cells = []
+                        first_row = page.query_selector("table tbody tr")
+                        if first_row:
+                            for cell in first_row.query_selector_all("td")[:8]:
+                                first_row_cells.append(cell.inner_text().strip()[:30])
+
+                        row_count = len(page.query_selector_all("table tbody tr"))
+
+                        cb(status_callback, f"  PAGE [{label}] url={actual_url}")
+                        cb(status_callback, f"    rows={row_count} | headers={headers}")
+                        if first_row_cells:
+                            cb(status_callback, f"    sample_row={first_row_cells}")
+                        else:
+                            cb(status_callback, f"    (no table data on this page)")
+                    except Exception as ex:
+                        cb(status_callback, f"  [{label}] ERROR: {ex}")
+            except Exception as ex:
+                cb(status_callback, f"  EXPLORER ERROR: {ex}")
+            cb(status_callback, "--- PORTAL EXPLORER DONE ---")
+            # ─────────────────────────────────────────────────────────────
+
             cb(status_callback, "Navigating to Lead Inbox...")
             page.goto(LEAD_INBOX, timeout=30000)
             try:
