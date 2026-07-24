@@ -38,7 +38,7 @@
               <input type="password" id="session_cookie" value="${s.has_session_cookie ? '••••••••••••••••' : ''}" placeholder="Paste cookie value here"/>
               <button class="eye-btn" onclick="togglePass('session_cookie', this)">Show</button>
             </div>
-            <span class="field-note">How to get it: Log into planetaltig.com in Chrome → F12 → Application → Cookies → www.planetaltig.com → find <strong>.AspNet.ApplicationCookie</strong> or <strong>.ASPXAUTH</strong> → copy the Value</span>
+            <span class="field-note">How to get it: Log into planetaltig.com in Chrome → F12 → Application tab → Cookies (left sidebar) → click www.planetaltig.com → look for a cookie named <strong>.AspNet.ApplicationCookie</strong> or <strong>.ASPXAUTH</strong> or <strong>ASP.NET_SessionId</strong> → copy the Value. If unsure which one, try the longest value.</span>
           </div>
           <button class="btn btn-primary" id="cookie-btn" onclick="saveCookie()">Save Cookie</button>
         </div>

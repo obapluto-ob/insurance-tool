@@ -8,6 +8,7 @@ load_dotenv()
 PORTAL_URL = os.getenv("PORTAL_URL")
 USERNAME = os.getenv("PORTAL_USERNAME")
 PASSWORD = os.getenv("PORTAL_PASSWORD")
+LEAD_INBOX = "https://www.planetaltig.com/Lead/Inbox"
 
 BROWSER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".playwright-browsers")
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", BROWSER_PATH)
@@ -16,6 +17,79 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", BROWSER_PATH)
 def cb(status_callback, msg):
     if status_callback:
         status_callback(msg)
+
+
+def login(page, context, session_cookie, status_callback):
+    if session_cookie:
+        cb(status_callback, "Injecting session cookie...")
+        for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
+            context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
+
+    page.goto(PORTAL_URL, timeout=30000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except:
+        pass
+
+    if "Login" not in page.url and "login" not in page.url:
+        cb(status_callback, f"Logged in via cookie. URL: {page.url}")
+        return True
+
+    if session_cookie:
+        all_cookies = context.cookies()
+        cb(status_callback, f"Cookie failed. Site cookies: {[c['name'] for c in all_cookies]}")
+        cb(status_callback, "Cookie expired. Get a fresh one from your browser and update Settings.")
+        return False
+
+    cb(status_callback, "Trying username/password login...")
+    for selector in ["input[name='Alias']", "input[type='text']"]:
+        try:
+            page.fill(selector, USERNAME, timeout=3000)
+            break
+        except:
+            continue
+
+    for selector in ["input[name='Password']", "input[type='password']"]:
+        try:
+            page.fill(selector, PASSWORD, timeout=3000)
+            break
+        except:
+            continue
+
+    for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')"]:
+        try:
+            page.click(selector, timeout=3000)
+            break
+        except:
+            continue
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except:
+        pass
+    page.wait_for_timeout(3000)
+    cb(status_callback, f"After login - URL: {page.url}")
+
+    if "Login" in page.url or "login" in page.url:
+        page_error = ""
+        for sel in [".validation-summary-errors", ".text-danger", ".alert"]:
+            try:
+                el = page.query_selector(sel)
+                if el:
+                    page_error = el.inner_text().strip()
+                    break
+            except:
+                pass
+        if "locked" in page_error.lower():
+            cb(status_callback, "FAILED: Account locked out. Wait 15 minutes.")
+        elif page_error:
+            cb(status_callback, f"FAILED: {page_error}")
+        else:
+            cb(status_callback, "FAILED: Wrong username or password.")
+        return False
+
+    cb(status_callback, "Login successful.")
+    return True
 
 
 def run_scraper(status_callback=None):
@@ -27,7 +101,6 @@ def run_scraper(status_callback=None):
 
     init_db()
 
-    # Check for saved session cookie
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
@@ -36,169 +109,150 @@ def run_scraper(status_callback=None):
     session_cookie = row[0] if row else None
 
     cb(status_callback, "Starting browser...")
-    cb(status_callback, f"Portal URL: {PORTAL_URL}")
-    cb(status_callback, f"Username: {USERNAME}")
     cb(status_callback, f"Login method: {'Session Cookie' if session_cookie else 'Username/Password'}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
-            "--no-sandbox", "--disable-dev-shm-usage",
-            "--disable-gpu", "--single-process"
+            "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"
         ])
         context = browser.new_context()
-
-        if session_cookie:
-            cb(status_callback, "Injecting session cookie...")
-            context.add_cookies([{
-                "name": ".AspNet.ApplicationCookie",
-                "value": session_cookie,
-                "domain": "www.planetaltig.com",
-                "path": "/",
-                "httpOnly": True,
-                "secure": True,
-            }])
-
         page = context.new_page()
 
         try:
-            cb(status_callback, f"Navigating to {PORTAL_URL}...")
-            page.goto(PORTAL_URL, timeout=30000)
+            if not login(page, context, session_cookie, status_callback):
+                browser.close()
+                return 0
+
+            # Go directly to Lead Inbox
+            cb(status_callback, f"Navigating to Lead Inbox...")
+            page.goto(LEAD_INBOX, timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except:
                 pass
-            cb(status_callback, f"Page title: {page.title()}")
-            cb(status_callback, f"Current URL: {page.url}")
+            cb(status_callback, f"Lead Inbox URL: {page.url}")
 
-            if "Login" in page.url or "login" in page.url:
-                if session_cookie:
-                    cb(status_callback, "Cookie expired or invalid. Please get a fresh cookie from your browser and update it in Settings.")
-                    browser.close()
-                    return 0
-
-                cb(status_callback, "Cookie not set, trying username/password login...")
-                # Log inputs
-                inputs = page.query_selector_all("input")
-                cb(status_callback, f"Found {len(inputs)} input fields:")
-                for inp in inputs:
-                    t = inp.get_attribute("type") or "text"
-                    n = inp.get_attribute("name") or inp.get_attribute("id") or "?"
-                    cb(status_callback, f"  - input type={t} name={n}")
-
-                # Fill and submit
-                filled_user = False
-                for selector in ["input[name='Alias']", "input[name='username']", "input[name='email']", "input[type='text']"]:
-                    try:
-                        page.fill(selector, USERNAME, timeout=3000)
-                        cb(status_callback, f"Filled username: {selector}")
-                        filled_user = True
-                        break
-                    except: continue
-
-                for selector in ["input[name='Password']", "input[name='password']", "input[type='password']"]:
-                    try:
-                        page.fill(selector, PASSWORD, timeout=3000)
-                        cb(status_callback, f"Filled password: {selector}")
-                        break
-                    except: continue
-
-                for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')"]:
-                    try:
-                        page.click(selector, timeout=3000)
-                        cb(status_callback, f"Clicked submit: {selector}")
-                        break
-                    except: continue
-
-                try:
-                    page.wait_for_load_state("networkidle", timeout=10000)
-                except: pass
-                page.wait_for_timeout(3000)
-                cb(status_callback, f"After login - URL: {page.url}")
-
-                if "Login" in page.url or "login" in page.url:
-                    page_error = ""
-                    for err_sel in [".validation-summary-errors", ".text-danger", ".alert"]:
-                        try:
-                            el = page.query_selector(err_sel)
-                            if el:
-                                page_error = el.inner_text().strip()
-                                break
-                        except: pass
-                    if "locked" in page_error.lower():
-                        cb(status_callback, "FAILED: Account locked out. Wait 15 minutes.")
-                    elif page_error:
-                        cb(status_callback, f"FAILED: {page_error}")
-                    else:
-                        cb(status_callback, "FAILED: Wrong username or password.")
-                    browser.close()
-                    return 0
-
-            # Log all links so we can find the leads section
-            links = page.query_selector_all("a")
-            cb(status_callback, f"Logged in! Found {len(links)} links:")
-            for link in links[:30]:
-                href = link.get_attribute("href") or ""
-                text = link.inner_text().strip()[:50]
-                if text:
-                    cb(status_callback, f"  [{text}] -> {href}")
-
-            # Try to find leads section
-            found_leads = False
-            for keyword in ["lead", "leads", "contact", "contacts", "prospect", "client", "member", "members"]:
-                try:
-                    page.click(f"a:has-text('{keyword}')", timeout=3000)
-                    page.wait_for_timeout(2000)
-                    cb(status_callback, f"Clicked '{keyword}' link -> URL: {page.url}")
-                    found_leads = True
-                    break
-                except:
-                    continue
-            if not found_leads:
-                cb(status_callback, "Could not find leads nav link, scraping current page...")
-
-            leads = []
+            leads_data = []
             page_num = 1
 
             while True:
-                cb(status_callback, f"--- Scraping page {page_num} | URL: {page.url} ---")
+                cb(status_callback, f"Scraping page {page_num}...")
 
-                # Log tables found
-                tables = page.query_selector_all("table")
-                cb(status_callback, f"Found {len(tables)} table(s) on page")
-
-                for t_idx, table in enumerate(tables):
-                    headers = [th.inner_text().strip().lower() for th in table.query_selector_all("th")]
-                    rows = table.query_selector_all("tr")
-                    cb(status_callback, f"Table {t_idx+1}: headers={headers}, rows={len(rows)}")
-                    for row in rows:
-                        cells = [td.inner_text().strip() for td in row.query_selector_all("td")]
-                        if cells:
-                            lead = dict(zip(headers, cells)) if headers else {f"col_{i}": v for i, v in enumerate(cells)}
-                            leads.append(lead)
-
-                # If no tables, log page text snippet
-                if not tables:
-                    body_text = page.inner_text("body")[:500]
-                    cb(status_callback, f"No tables found. Page content preview: {body_text}")
-
+                # Wait for table rows
                 try:
-                    next_btn = page.query_selector("a:has-text('Next'), button:has-text('Next')")
+                    page.wait_for_selector("table tbody tr", timeout=8000)
+                except:
+                    cb(status_callback, "No table rows found on this page.")
+                    break
+
+                rows = page.query_selector_all("table tbody tr")
+                cb(status_callback, f"Found {len(rows)} lead rows on page {page_num}")
+
+                for row in rows:
+                    try:
+                        cells = row.query_selector_all("td")
+                        if len(cells) < 5:
+                            continue
+
+                        name = cells[3].inner_text().strip()
+                        address = cells[4].inner_text().strip() if len(cells) > 4 else ""
+                        lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
+                        assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
+                        city = cells[9].inner_text().strip() if len(cells) > 9 else ""
+                        state = cells[10].inner_text().strip() if len(cells) > 10 else ""
+                        lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
+
+                        # Get detail page link
+                        link = row.query_selector("a")
+                        detail_url = link.get_attribute("href") if link else None
+
+                        leads_data.append({
+                            "name": name,
+                            "address": address,
+                            "lead_tags": lead_tags,
+                            "assign_date": assign_date,
+                            "city": city,
+                            "state": state,
+                            "lead_type": lead_type,
+                            "detail_url": detail_url,
+                        })
+                    except:
+                        continue
+
+                # Next page
+                try:
+                    next_btn = page.query_selector("a:has-text('Next')")
                     if next_btn and next_btn.is_visible():
                         next_btn.click()
-                        page.wait_for_timeout(2000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=8000)
+                        except:
+                            pass
                         page_num += 1
                     else:
                         break
                 except:
                     break
 
-            browser.close()
-            cb(status_callback, f"Scrape complete. Raw rows collected: {len(leads)}")
-            if leads:
-                cb(status_callback, f"Sample row keys: {list(leads[0].keys())}")
-                cb(status_callback, f"Sample row data: {leads[0]}")
+            cb(status_callback, f"Collected {len(leads_data)} leads from inbox. Fetching details...")
 
-            saved = save_leads(leads, status_callback)
+            # Fetch email from each lead detail page (first 50 to avoid timeout)
+            saved = 0
+            fetch_limit = min(len(leads_data), 50)
+            for i, lead in enumerate(leads_data[:fetch_limit]):
+                try:
+                    if lead.get("detail_url"):
+                        detail_url = "https://www.planetaltig.com" + lead["detail_url"] if lead["detail_url"].startswith("/") else lead["detail_url"]
+                        page.goto(detail_url, timeout=15000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=8000)
+                        except:
+                            pass
+
+                        # Extract email
+                        email = ""
+                        for sel in ["a[href^='mailto:']", "[class*='email']", "td:has-text('@')"]:
+                            try:
+                                el = page.query_selector(sel)
+                                if el:
+                                    text = el.inner_text().strip()
+                                    if "@" in text:
+                                        email = text.replace("mailto:", "").strip()
+                                        break
+                            except:
+                                pass
+
+                        # Extract phone
+                        phone = ""
+                        for sel in ["a[href^='tel:']", "[class*='phone']"]:
+                            try:
+                                el = page.query_selector(sel)
+                                if el:
+                                    phone = el.inner_text().strip()
+                                    break
+                            except:
+                                pass
+
+                        lead["email"] = email
+                        lead["phone"] = phone
+
+                    if (i + 1) % 10 == 0:
+                        cb(status_callback, f"Fetched details for {i+1}/{fetch_limit} leads...")
+
+                    result = save_lead(lead)
+                    if result:
+                        saved += 1
+                except:
+                    continue
+
+            # Save remaining leads without email
+            for lead in leads_data[fetch_limit:]:
+                lead["email"] = ""
+                lead["phone"] = ""
+                save_lead(lead)
+
+            browser.close()
+            cb(status_callback, f"Done! Saved {saved} new leads with details. {len(leads_data) - fetch_limit} saved without email (detail fetch limit).")
             return saved
 
         except Exception as e:
@@ -207,32 +261,32 @@ def run_scraper(status_callback=None):
             return 0
 
 
-def save_leads(leads, status_callback=None):
+def save_lead(lead):
     conn = get_connection()
     c = conn.cursor()
-    saved = 0
+    try:
+        name = lead.get("name", "Unknown").strip() or "Unknown"
+        email = lead.get("email", "").strip()
+        phone = lead.get("phone", "").strip()
+        policy_status = lead.get("lead_tags", lead.get("lead_type", "Unknown")).strip()
+        address = lead.get("address", "").strip()
 
-    for lead in leads:
-        email = lead.get("email", lead.get("e-mail", lead.get("email address", ""))).strip()
-        name = lead.get("name", lead.get("full name", lead.get("client name", "Unknown"))).strip()
-        phone = lead.get("phone", lead.get("phone number", lead.get("mobile", ""))).strip()
-        policy_status = lead.get("policy status", lead.get("status", lead.get("policy", "Unknown"))).strip()
+        c.execute("""
+            INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        inserted = c.rowcount > 0
+        conn.commit()
+        return inserted
+    except:
+        return False
+    finally:
+        conn.close()
 
-        if not email or "@" not in email:
-            continue
 
-        try:
-            c.execute('''
-                INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            saved += 1
-        except:
-            continue
-
-    conn.commit()
-    conn.close()
-    cb(status_callback, f"Saved {saved} new leads to database.")
+def save_leads(leads, status_callback=None):
+    saved = sum(1 for l in leads if save_lead(l))
+    cb(status_callback, f"Saved {saved} new leads.")
     return saved
 
 
