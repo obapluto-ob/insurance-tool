@@ -7,7 +7,6 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
 from database import get_connection
-from email_templates import get_template
 
 load_dotenv()
 
@@ -15,9 +14,38 @@ GMAIL = os.getenv("GMAIL_ADDRESS")
 APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 
+def get_signature():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT key, value FROM settings WHERE key LIKE 'sig_%'")
+    rows = dict(c.fetchall())
+    conn.close()
+    name = rows.get("sig_name", "Dona Maina")
+    title = rows.get("sig_title", "Life & Income Insurance Specialist")
+    phone = rows.get("sig_phone", "")
+    return f"{name}\n{title}" + (f"\n{phone}" if phone else "")
+
+
+def get_template_text(template_name, lead_name):
+    from email_templates import TEMPLATES
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT key, value FROM settings WHERE key LIKE 'tpl_%'")
+    rows = dict(c.fetchall())
+    conn.close()
+    base = TEMPLATES.get(template_name)
+    if not base:
+        return None
+    subject = rows.get(f"tpl_subject_{template_name}", base["subject"])
+    body = rows.get(f"tpl_body_{template_name}", base["body"])
+    sig = get_signature()
+    body = body.replace("{name}", lead_name).replace("{gmail}", GMAIL or "").replace("{signature}", sig)
+    return {"subject": subject, "body": body}
+
+
 def send_email(to_email: str, lead_id: int, template_name: str, lead_name: str, status_callback=None):
     try:
-        template = get_template(template_name, lead_name, GMAIL)
+        template = get_template_text(template_name, lead_name)
         if not template:
             if status_callback:
                 status_callback(f"Template '{template_name}' not found.")
@@ -33,28 +61,23 @@ def send_email(to_email: str, lead_id: int, template_name: str, lead_name: str, 
             server.login(GMAIL, APP_PASSWORD)
             server.sendmail(GMAIL, to_email, msg.as_string())
 
-        # Update database
         conn = get_connection()
         c = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("""
-            UPDATE leads SET email_sent = 1, email_type = ?, date_emailed = ?
-            WHERE id = ?
-        """, (template_name, now, lead_id))
-        c.execute("""
-            INSERT INTO email_log (lead_id, email_type, date_sent, status)
-            VALUES (?, ?, ?, ?)
-        """, (lead_id, template_name, now, "sent"))
+        c.execute("UPDATE leads SET email_sent=1, email_type=?, date_emailed=? WHERE id=?",
+                  (template_name, now, lead_id))
+        c.execute("INSERT INTO email_log (lead_id, email_type, date_sent, status) VALUES (?,?,?,?)",
+                  (lead_id, template_name, now, "sent"))
         conn.commit()
         conn.close()
 
         if status_callback:
-            status_callback(f"Email sent to {to_email}")
+            status_callback(f"Sent to {to_email}")
         return True
 
     except Exception as e:
         if status_callback:
-            status_callback(f"Failed to send to {to_email}: {str(e)}")
+            status_callback(f"Failed {to_email}: {str(e)}")
         return False
 
 
@@ -73,7 +96,6 @@ def send_bulk_emails(leads: list, template_name: str, status_callback=None):
             sent += 1
         else:
             failed += 1
-
     if status_callback:
         status_callback(f"Done! Sent: {sent} | Failed: {failed}")
     return sent, failed
@@ -109,27 +131,17 @@ def check_replies(status_callback=None):
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            replies.append({
-                "from": sender,
-                "subject": subject,
-                "date": date,
-                "body": body[:500]
-            })
-
-            # Mark email as read so it's not fetched again
+            replies.append({"from": sender, "subject": subject, "date": date, "body": body[:500]})
             mail.store(eid, '+FLAGS', '\\Seen')
 
-            # Match reply to lead in DB
             conn = get_connection()
             c = conn.cursor()
             sender_email = sender.split("<")[-1].replace(">", "").strip()
-            c.execute("SELECT id FROM leads WHERE email = ?", (sender_email,))
+            c.execute("SELECT id FROM leads WHERE email=?", (sender_email,))
             row = c.fetchone()
             if row:
-                c.execute("""
-                    UPDATE leads SET response_received = 1, response_text = ?, date_responded = ?
-                    WHERE id = ?
-                """, (body[:500], date, row[0]))
+                c.execute("UPDATE leads SET response_received=1, response_text=?, date_responded=? WHERE id=?",
+                          (body[:500], date, row[0]))
                 conn.commit()
             conn.close()
 

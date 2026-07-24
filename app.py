@@ -177,7 +177,60 @@ def responses():
     return jsonify(rows)
 
 
-@app.route("/api/settings", methods=["GET", "POST"])
+@app.route("/api/templates", methods=["GET", "POST"])
+@protected
+def templates():
+    conn = get_connection()
+    c = conn.cursor()
+    if request.method == "POST":
+        data = request.get_json()
+        for name, tpl in data.items():
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                      (f"tpl_subject_{name}", tpl.get("subject", "")))
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                      (f"tpl_body_{name}", tpl.get("body", "")))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+
+    c.execute("SELECT key, value FROM settings WHERE key LIKE 'tpl_%'")
+    rows = dict(c.fetchall())
+    conn.close()
+
+    from email_templates import TEMPLATES
+    result = {}
+    for name, tpl in TEMPLATES.items():
+        result[name] = {
+            "subject": rows.get(f"tpl_subject_{name}", tpl["subject"]),
+            "body": rows.get(f"tpl_body_{name}", tpl["body"])
+        }
+    return jsonify(result)
+
+
+@app.route("/api/signature", methods=["GET", "POST"])
+@protected
+def signature():
+    conn = get_connection()
+    c = conn.cursor()
+    if request.method == "POST":
+        data = request.get_json()
+        for key in ["sig_name", "sig_title", "sig_phone"]:
+            if data.get(key) is not None:
+                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+
+    c.execute("SELECT key, value FROM settings WHERE key LIKE 'sig_%'")
+    rows = dict(c.fetchall())
+    conn.close()
+    return jsonify({
+        "sig_name": rows.get("sig_name", "Dona Maina"),
+        "sig_title": rows.get("sig_title", "Life & Income Insurance Specialist"),
+        "sig_phone": rows.get("sig_phone", ""),
+    })
+
+
 @protected
 def settings():
     conn = get_connection()
