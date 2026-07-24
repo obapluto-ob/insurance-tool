@@ -20,8 +20,25 @@ def cb(status_callback, msg):
 
 
 def login(page, context, session_cookie, status_callback):
+    import json
+
+    # First try saved browser cookies from previous successful login
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
+    row = c.fetchone()
+    conn.close()
+
+    if row:
+        try:
+            saved_cookies = json.loads(row[0])
+            context.add_cookies(saved_cookies)
+            cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies from last session...")
+        except:
+            pass
+
     if session_cookie:
-        cb(status_callback, "Injecting session cookie...")
+        cb(status_callback, "Also injecting manual session cookie...")
         for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
             context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
 
@@ -41,7 +58,16 @@ def login(page, context, session_cookie, status_callback):
         cb(status_callback, "Cookie expired. Get a fresh one from your browser and update Settings.")
         return False
 
-    cb(status_callback, "Trying username/password login...")
+    # Clear expired saved cookies and fall back to password
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("DELETE FROM settings WHERE key='browser_cookies'")
+        conn.commit()
+        conn.close()
+    except:
+        pass
+    cb(status_callback, "Saved session expired. Logging in with username/password...")
     for selector in ["input[name='Alias']", "input[type='text']"]:
         try:
             page.fill(selector, USERNAME, timeout=3000)
@@ -89,7 +115,24 @@ def login(page, context, session_cookie, status_callback):
         return False
 
     cb(status_callback, "Login successful.")
+    # Save all browser cookies to DB so next sync skips login
+    _save_cookies(context, status_callback)
     return True
+
+
+def _save_cookies(context, status_callback=None):
+    try:
+        import json
+        cookies = context.cookies()
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                  ("browser_cookies", json.dumps(cookies)))
+        conn.commit()
+        conn.close()
+        cb(status_callback, f"Session saved ({len(cookies)} cookies). Next sync will skip login.")
+    except Exception as e:
+        cb(status_callback, f"Could not save session: {e}")
 
 
 def run_scraper(status_callback=None):
@@ -108,8 +151,18 @@ def run_scraper(status_callback=None):
     conn.close()
     session_cookie = row[0] if row else None
 
+    has_saved = False
+    try:
+        conn2 = get_connection()
+        c2 = conn2.cursor()
+        c2.execute("SELECT value FROM settings WHERE key='browser_cookies'")
+        has_saved = bool(c2.fetchone())
+        conn2.close()
+    except:
+        pass
+
     cb(status_callback, "Starting browser...")
-    cb(status_callback, f"Login method: {'Session Cookie' if session_cookie else 'Username/Password'}")
+    cb(status_callback, f"Login method: {'Saved session' if has_saved else 'Session Cookie' if session_cookie else 'Username/Password'}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
