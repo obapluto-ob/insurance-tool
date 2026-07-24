@@ -26,6 +26,8 @@ class _Cursor:
         self._rows = []
         self._pos = 0
         self.description = None
+        if sql.strip().upper().startswith("SELECT"):
+            self._conn._flush()
 
     def executemany(self, sql, seq):
         for params in seq:
