@@ -108,30 +108,25 @@ def run_scraper(status_callback=None):
             cb(status_callback, f"After login - Title: {page.title()}")
 
             # Log any error message shown on page
+            page_error = ""
             for err_sel in [".validation-summary-errors", ".alert", ".error", "[class*='error']", "[class*='alert']", ".text-danger"]:
                 try:
                     el = page.query_selector(err_sel)
                     if el:
-                        cb(status_callback, f"Page error message: {el.inner_text().strip()}")
+                        page_error = el.inner_text().strip()
+                        break
                 except:
                     pass
 
-            # Log current value in Alias field to confirm it was filled
-            try:
-                alias_val = page.input_value("input[name='Alias']")
-                cb(status_callback, f"Alias field value after submit: '{alias_val}'")
-            except:
-                pass
-
-            # Dump full page text to see what the portal shows
-            try:
-                body_text = page.inner_text("body")[:800]
-                cb(status_callback, f"Page body after login attempt: {body_text}")
-            except:
-                pass
-
             if "Login" in page.url or "login" in page.url:
-                cb(status_callback, "ERROR: Still on login page — check PORTAL_USERNAME and PORTAL_PASSWORD env vars on Render")
+                if "locked" in page_error.lower():
+                    cb(status_callback, "FAILED: Account locked out. Wait 15 minutes then try again.")
+                elif "invalid" in page_error.lower() or "incorrect" in page_error.lower() or "wrong" in page_error.lower():
+                    cb(status_callback, "FAILED: Wrong username or password.")
+                elif page_error:
+                    cb(status_callback, f"FAILED: {page_error}")
+                else:
+                    cb(status_callback, "FAILED: Login did not succeed. Unknown reason.")
                 browser.close()
                 return 0
 
