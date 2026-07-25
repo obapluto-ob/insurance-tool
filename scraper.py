@@ -328,8 +328,8 @@ def run_scraper(status_callback=None):
 
             browser.close()
 
-            # ── 4. Save ───────────────────────────────────────────────
-            new_leads = sum(1 for l in leads_data if save_lead(l))
+            # ── 4. Save (bulk) ────────────────────────────────────
+            new_leads = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
             type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
             cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email}")
@@ -349,6 +349,51 @@ def run_scraper(status_callback=None):
             browser.close()
             cb(status_callback, f"SCRAPER ERROR: {str(e)}")
             return 0
+
+
+def save_leads_bulk(leads, status_callback=None):
+    """Save all leads in one Turso pipeline request — no duplicate per-lead HTTP calls."""
+    if not leads:
+        return 0
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    c = conn.cursor()
+
+    # Fetch all existing emails and name+policy combos in one query
+    c.execute("SELECT email, full_name, policy_status FROM leads")
+    existing = c.fetchall()
+    existing_emails = {row[0] for row in existing if row[0]}
+    existing_no_email = {(row[1], row[2]) for row in existing if not row[0]}
+
+    new_count = 0
+    for lead in leads:
+        name = lead.get("name", "Unknown").strip() or "Unknown"
+        email = lead.get("email", "").strip() or None
+        phone = lead.get("phone", "").strip() or None
+        policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
+
+        if email:
+            if email in existing_emails:
+                continue
+            existing_emails.add(email)
+        else:
+            key = (name, policy_status)
+            if key in existing_no_email:
+                continue
+            existing_no_email.add(key)
+
+        c.execute("""
+            INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, email, phone, policy_status, "planetaltig.com", now))
+        new_count += 1
+
+    conn.commit()
+    conn.close()
+    if status_callback:
+        status_callback(f"Saved {new_count} new leads to database.")
+    return new_count
 
 
 def save_lead(lead):
