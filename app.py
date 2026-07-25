@@ -218,6 +218,22 @@ def sync():
     return jsonify({"ok": True})
 
 
+@app.route("/api/debug/schema")
+@protected
+def debug_schema():
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        schema = {}
+        for table in ["leads", "settings", "email_log"]:
+            c.execute(f"PRAGMA table_info({table})")
+            schema[table] = [row[1] for row in c.fetchall()]
+        conn.close()
+        return jsonify(schema)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/debug")
 @protected
 def debug():
