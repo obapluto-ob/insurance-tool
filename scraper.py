@@ -290,7 +290,10 @@ def run_scraper(status_callback=None):
                     return 0
                 try:
                     cells = row.query_selector_all("td")
-                    if len(cells) < 5:
+                    if len(cells) < 4:
+                        continue
+                    name = cells[3].inner_text().strip()
+                    if not name:
                         continue
                     assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
 
@@ -306,13 +309,12 @@ def run_scraper(status_callback=None):
                         except:
                             pass
 
-                    name = cells[3].inner_text().strip()
-                    address = cells[4].inner_text().strip() if len(cells) > 4 else ""
+                    address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
                     lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
-                    city = cells[9].inner_text().strip() if len(cells) > 9 else ""
-                    state = cells[10].inner_text().strip() if len(cells) > 10 else ""
+                    city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
+                    state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
                     lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
-                    link = row.query_selector("a")
+                    link      = row.query_selector("a")
                     detail_url = link.get_attribute("href") if link else None
                     email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
                     leads_data.append({
@@ -356,16 +358,14 @@ def save_lead(lead):
         name = lead.get("name", "Unknown").strip() or "Unknown"
         email = lead.get("email", "").strip() or None
         phone = lead.get("phone", "").strip() or None
-        policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip()
+        policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
 
         if email:
-            # Has email — use email as unique key
             c.execute("""
                 INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         else:
-            # No email — use name+policy_status as unique key
             c.execute("SELECT id FROM leads WHERE full_name=? AND email IS NULL AND policy_status=?", (name, policy_status))
             if c.fetchone():
                 return False
@@ -377,7 +377,7 @@ def save_lead(lead):
         inserted = c.rowcount > 0
         conn.commit()
         return inserted
-    except:
+    except Exception as e:
         return False
     finally:
         conn.close()

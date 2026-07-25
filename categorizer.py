@@ -1,10 +1,17 @@
 from database import get_connection
 
-# Exact lead_type values from planetaltig.com portal
-POS_KEYWORDS = ["pos"]
-SGLW_KEYWORDS = ["union"]
-ACTIVE_KEYWORDS = ["upcoming appointment"]
-PROSPECT_KEYWORDS = ["will kit", "mcgruff", "childsafe", "plus lead", "new address", "no appointment", "past appointment"]
+# Exact Type values from planetaltig.com portal
+TYPE_MAP = {
+    "pos":                                      "POS",
+    "will kit":                                 "NO_POLICY",
+    "mcgruff/childsafe":                        "NO_POLICY",
+    "plus lead":                                "NO_POLICY",
+    "new address:": "NO_POLICY",
+    "union":                                    "SGLW",
+    "appointment status: upcoming appointment": "ACTIVE",
+    "appointment status: no appointment":       "NO_POLICY",
+    "appointment status: past appointment":     "NO_POLICY",
+}
 
 # Who can be emailed and with what template
 EMAILABLE_TEMPLATES = {
@@ -17,23 +24,7 @@ EMAILABLE_TEMPLATES = {
 
 def categorize_lead(policy_status: str) -> str:
     status = (policy_status or "").lower().strip()
-
-    if status == "pos":
-        return "POS"
-
-    for kw in ACTIVE_KEYWORDS:
-        if kw in status:
-            return "ACTIVE"
-
-    for kw in SGLW_KEYWORDS:
-        if kw in status:
-            return "SGLW"
-
-    for kw in PROSPECT_KEYWORDS:
-        if kw in status:
-            return "NO_POLICY"
-
-    return "NO_POLICY"
+    return TYPE_MAP.get(status, "NO_POLICY")
 
 
 def get_allowed_templates(category: str) -> list:
