@@ -345,6 +345,9 @@ def run_scraper(status_callback=None):
                     city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
                     state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
                     lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
+                    if not lead_type and len(cells) <= 11:
+                        if len(leads_data) < 3:
+                            cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
                     link      = row.query_selector("a")
                     detail_url = link.get_attribute("href") if link else None
                     email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
@@ -449,8 +452,8 @@ def _save_enriched(lead, phone, email, dob, address, city, state):
             city    = COALESCE(NULLIF(city,''),    NULLIF(?, '')),
             state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
             enriched = 1
-        WHERE full_name=? AND policy_status=?
-    """, (phone, email, dob, address, city, state, lead["name"], lead["lead_type"]))
+        WHERE full_name=?
+    """, (phone, email, dob, address, city, state, lead["name"]))
     conn.commit()
     conn.close()
 
@@ -509,10 +512,12 @@ def save_leads_bulk(leads, status_callback=None):
     existing_no_email = {(row[1], row[2]) for row in existing if not row[0]}
 
     new_count = 0
+    rejected = 0
     for lead in leads:
         name          = lead.get("name", "Unknown").strip() or "Unknown"
         # Reject sub-rows that slipped through
         if any(name.lower().startswith(p) for p in ["phone no:", "phone:", "group:", "name:", "email:", "dob:", "cell:", "mobile:"]):
+            rejected += 1
             continue
         name          = lead.get("name", "Unknown").strip() or "Unknown"
         email         = lead.get("email", "").strip() or None
@@ -544,7 +549,7 @@ def save_leads_bulk(leads, status_callback=None):
     conn.commit()
     conn.close()
     if status_callback:
-        status_callback(f"Saved {new_count} new leads to database.")
+        status_callback(f"Saved {new_count} new leads to database. Rejected {rejected} sub-rows.")
     return new_count
 
 
