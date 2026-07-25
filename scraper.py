@@ -508,10 +508,10 @@ def save_leads_bulk(leads, status_callback=None):
     conn = get_connection()
     c = conn.cursor()
 
-    c.execute("SELECT email, full_name, policy_status FROM leads")
+    c.execute("SELECT email, full_name, address FROM leads")
     existing = c.fetchall()
     existing_emails = {row[0] for row in existing if row[0]}
-    existing_no_email = {(row[1], row[2]) for row in existing if not row[0]}
+    existing_no_email = {(row[1], row[2] or "") for row in existing if not row[0]}
 
     new_count = 0
     rejected = 0
@@ -538,7 +538,7 @@ def save_leads_bulk(leads, status_callback=None):
                 continue
             existing_emails.add(email)
         else:
-            key = (name, policy_status)
+            key = (name, address or "")
             if key in existing_no_email:
                 continue
             existing_no_email.add(key)
