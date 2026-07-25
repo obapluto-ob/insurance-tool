@@ -235,9 +235,6 @@ def run_scraper(status_callback=None):
     start_page = int(row[0]) + 1 if row else 1
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
     row = c.fetchone()
-    # check if portal has been explored before
-    c.execute("SELECT value FROM settings WHERE key='portal_explored'")
-    explored = c.fetchone()
     conn.close()
     session_cookie = row[0] if row else None
 
@@ -259,62 +256,6 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
-            # ── ONE-TIME PORTAL EXPLORER ──────────────────────────────
-            if not explored:
-                cb(status_callback, "--- PORTAL EXPLORER (first time only) ---")
-                try:
-                    nav_links = page.query_selector_all("nav a, .navbar a, .sidebar a, .menu a, #nav a, ul.nav a")
-                    seen_hrefs = set()
-                    explore_urls = []
-                    for link in nav_links:
-                        href = link.get_attribute("href") or ""
-                        text = link.inner_text().strip()
-                        if not href or href.startswith("#") or href.startswith("javascript"):
-                            continue
-                        if not href.startswith("http"):
-                            href = "https://www.planetaltig.com" + href
-                        if href not in seen_hrefs and "planetaltig.com" in href:
-                            seen_hrefs.add(href)
-                            explore_urls.append((text, href))
-                            cb(status_callback, f"  NAV: [{text}] → {href}")
-
-                    if not explore_urls:
-                        cb(status_callback, "  No nav links found — trying common paths...")
-                        for path in ["/Lead/Inbox", "/Lead/Active", "/Lead/All", "/Client/Index",
-                                     "/Policy/Index", "/Member/Index", "/Home"]:
-                            explore_urls.append((path, "https://www.planetaltig.com" + path))
-
-                    for label, url in explore_urls:
-                        if is_cancelled():
-                            break
-                        try:
-                            page.goto(url, timeout=12000)
-                            try:
-                                page.wait_for_load_state("networkidle", timeout=5000)
-                            except:
-                                pass
-                            if "login" in page.url.lower():
-                                cb(status_callback, f"  [{label}] → needs auth")
-                                continue
-                            headers = [h.inner_text().strip() for h in page.query_selector_all("table thead th")]
-                            row_count = len(page.query_selector_all("table tbody tr"))
-                            first_row = page.query_selector("table tbody tr")
-                            sample = [c.inner_text().strip()[:25] for c in first_row.query_selector_all("td")[:6]] if first_row else []
-                            cb(status_callback, f"  [{label}] rows={row_count} headers={headers}")
-                            if sample:
-                                cb(status_callback, f"    sample={sample}")
-                        except Exception as ex:
-                            cb(status_callback, f"  [{label}] ERROR: {ex}")
-
-                    conn2 = get_connection()
-                    c2 = conn2.cursor()
-                    c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('portal_explored', '1')")
-                    conn2.commit()
-                    conn2.close()
-                except Exception as ex:
-                    cb(status_callback, f"  EXPLORER ERROR: {ex}")
-                cb(status_callback, "--- EXPLORER DONE ---")
-            # ─────────────────────────────────────────────────────────
 
             # Direct URL to the target page — no clicking through pages
             inbox_url = f"{LEAD_INBOX}?page={start_page}" if start_page > 1 else LEAD_INBOX
