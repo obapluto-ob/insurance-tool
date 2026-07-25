@@ -354,10 +354,9 @@ def save_lead(lead):
     c = conn.cursor()
     try:
         name = lead.get("name", "Unknown").strip() or "Unknown"
-        email = lead.get("email", "").strip()
-        phone = lead.get("phone", "").strip()
+        email = lead.get("email", "").strip() or None
+        phone = lead.get("phone", "").strip() or None
         policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip()
-        address = lead.get("address", "").strip()
 
         if email:
             # Has email — use email as unique key
@@ -366,14 +365,14 @@ def save_lead(lead):
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         else:
-            # No email — use name+address as unique key to avoid duplicates
-            c.execute("SELECT id FROM leads WHERE full_name=? AND (email IS NULL OR email='') AND source='planetaltig.com' AND policy_status=?", (name, policy_status))
+            # No email — use name+policy_status as unique key
+            c.execute("SELECT id FROM leads WHERE full_name=? AND email IS NULL AND policy_status=?", (name, policy_status))
             if c.fetchone():
                 return False
             c.execute("""
                 INSERT INTO leads (full_name, email, phone, policy_status, source, date_scraped)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (name, "", phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                VALUES (?, NULL, ?, ?, ?, ?)
+            """, (name, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
         inserted = c.rowcount > 0
         conn.commit()

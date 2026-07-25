@@ -148,6 +148,8 @@ def init_db():
             value TEXT
         )
     ''')
+    # Fix any existing empty string emails to NULL
+    c.execute("UPDATE leads SET email=NULL WHERE email=''")
     conn.commit()
     conn.close()
 
