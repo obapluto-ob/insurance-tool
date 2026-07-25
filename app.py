@@ -10,6 +10,7 @@ from database import init_db, get_connection
 from categorizer import categorize_all_leads, get_leads_by_category
 from emailer import send_bulk_emails, check_replies
 from scraper import run_scraper
+from trader import trader
 
 load_dotenv()
 
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False)
+app.register_blueprint(trader)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
 APP_PIN = os.getenv("APP_PIN", "0518")

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BTC Trader — Live Feed</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0f; color: #e0e0e0; font-family: 'Courier New', monospace; }
+  header { background: #111; border-bottom: 1px solid #222; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; color: #f0b90b; letter-spacing: 2px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #2ecc71; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .feed { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+  .card { background: #111; border: 1px solid #1e1e2e; border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; }
+  .card.buy    { border-left: 3px solid #2ecc71; }
+  .card.sell   { border-left: 3px solid #e74c3c; }
+  .card.error  { border-left: 3px solid #e74c3c; opacity: .7; }
+  .card.scan   { border-left: 3px solid #333; opacity: .6; }
+  .card.status { border-left: 3px solid #3498db; }
+  .row { display: flex; justify-content: space-between; align-items: center; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: bold; letter-spacing: 1px; }
+  .tag.BUY  { background: #1a3a2a; color: #2ecc71; }
+  .tag.SELL { background: #3a1a1a; color: #e74c3c; }
+  .tag.INFO { background: #1a1a3a; color: #3498db; }
+  .tag.ERR  { background: #3a1a1a; color: #e74c3c; }
+  .tag.SCAN { background: #1e1e1e; color: #555; }
+  .time { font-size: 11px; color: #444; }
+  .reason { font-size: 13px; color: #aaa; margin-top: 6px; }
+  .details { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
+  .detail { font-size: 12px; color: #888; }
+  .detail span { color: #e0e0e0; }
+  #status-bar { text-align: center; padding: 8px; font-size: 12px; color: #444; }
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="dot"></div>
+  <h1>⚡ BTC TRADER — LIVE</h1>
+  <span style="margin-left:auto;font-size:12px;color:#444" id="last-update">--</span>
+</header>
+
+<div class="feed" id="feed"></div>
+<div id="status-bar">Connecting...</div>
+
+<script>
+const BASE = window.location.pathname.replace(/\/$/, "");
+
+function renderCard(e) {
+  const d = e.data || {};
+  const dir = d.direction || "";
+  let cls = e.type === "trade" ? (dir === "BUY" ? "buy" : "sell") : e.type;
+  let tag = e.type === "trade" ? dir : e.type.toUpperCase();
+  let tagCls = e.type === "trade" ? dir : (e.type === "error" ? "ERR" : e.type === "scan" ? "SCAN" : "INFO");
+
+  let html = `<div class="card ${cls}">
+    <div class="row">
+      <span class="tag ${tagCls}">${tag}</span>
+      <span class="time">${e.time} UTC</span>
+    </div>`;
+
+  if (e.type === "trade") {
+    html += `<div class="reason">${d.reason || ""}</div>
+    <div class="details">
+      <div class="detail">Lot <span>${d.lot}</span></div>
+      <div class="detail">Price <span>${d.price}</span></div>
+      <div class="detail">SL <span>${(d.sl||0).toFixed(2)}</span></div>
+      <div class="detail">TP <span>${(d.tp||0).toFixed(2)}</span></div>
+      <div class="detail">Spread <span>${d.spread}</span></div>
+      <div class="detail">Ticket <span>#${d.ticket}</span></div>
+    </div>`;
+  } else if (e.type === "scan") {
+    html += `<div class="reason">${d.reason || ""}</div>`;
+  } else {
+    html += `<div class="reason">${d.msg || JSON.stringify(d)}</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+async function poll() {
+  try {
+    const res = await fetch(`${BASE}/api/feed`);
+    const data = await res.json();
+    document.getElementById("feed").innerHTML = data.length
+      ? data.map(renderCard).join("")
+      : "<div style='text-align:center;color:#333;margin-top:60px'>Waiting for bot activity...</div>";
+    document.getElementById("last-update").textContent = "Updated " + new Date().toLocaleTimeString();
+    document.getElementById("status-bar").textContent = `${data.length} events`;
+    document.getElementById("dot").style.background = "#2ecc71";
+  } catch {
+    document.getElementById("dot").style.background = "#e74c3c";
+    document.getElementById("status-bar").textContent = "Connection lost";
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>
