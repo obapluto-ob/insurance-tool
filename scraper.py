@@ -258,11 +258,14 @@ def run_scraper(status_callback=None):
 
             # ── 2. Navigate ───────────────────────────────────────────
             cb(status_callback, "Loading Lead Inbox...")
-            page.goto(LEAD_INBOX, timeout=30000)
+            cb(status_callback, f"Navigating to {LEAD_INBOX} ...")
+            page.goto(LEAD_INBOX, timeout=60000, wait_until="commit")
+            cb(status_callback, "Navigation committed. Waiting for table rows...")
             try:
-                page.wait_for_load_state("networkidle", timeout=10000)
+                page.wait_for_load_state("domcontentloaded", timeout=30000)
             except:
                 pass
+            cb(status_callback, "DOM ready.")
 
             if is_cancelled():
                 cb(status_callback, "Sync cancelled.")
@@ -270,11 +273,13 @@ def run_scraper(status_callback=None):
                 return 0
 
             try:
-                page.wait_for_selector("table tbody tr", timeout=8000)
+                page.wait_for_selector("table tbody tr", timeout=15000)
             except:
-                cb(status_callback, "No leads found in table.")
+                cb(status_callback, f"No leads table found. Current URL: {page.url}")
                 browser.close()
                 return 0
+
+            cb(status_callback, "Table found. Scraping rows...")
 
             # ── 3. Scrape ─────────────────────────────────────────────
             rows = page.query_selector_all("table tbody tr")
@@ -326,6 +331,8 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
+            cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old). Saving to DB...")
+
             # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
@@ -335,9 +342,10 @@ def run_scraper(status_callback=None):
 
             # ── 5. Enrich all new leads from detail pages ─────────────
             needs_enrich = [l for l in leads_data if l.get("detail_url")]
+            cb(status_callback, f"Starting enrichment for {len(needs_enrich)} leads...")
             if needs_enrich:
-                cb(status_callback, f"Enriching {len(needs_enrich)} leads from detail pages...")
                 enrich_leads(needs_enrich, page, status_callback)
+            cb(status_callback, "Enrichment complete. Closing browser...")
 
             browser.close()
 
