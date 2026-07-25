@@ -414,14 +414,22 @@ def _scrape_detail(page, url):
         if not line:
             continue
         low = line.lower()
-        if not phone and any(low.startswith(p) for p in ["phone:", "cell:", "mobile:", "tel:"]):
-            phone = line.split(":", 1)[1].strip()
+        # Only match lines that start with known labels followed by a colon
+        if not phone and any(low.startswith(p) for p in ["phone:", "cell:", "mobile:", "tel:", "phone no:"]):
+            val = line.split(":", 1)[1].strip()
+            # Must look like a phone number
+            digits = ''.join(c for c in val if c.isdigit())
+            if len(digits) >= 7:
+                phone = val
         elif not email and low.startswith("email:") and "@" in line:
             email = line.split(":", 1)[1].strip()
         elif not dob and (low.startswith("dob:") or low.startswith("date of birth:")):
             dob = line.split(":", 1)[1].strip()
         elif not address and low.startswith("address:"):
-            address = line.split(":", 1)[1].strip()
+            val = line.split(":", 1)[1].strip()
+            # Must look like a street address (contains a digit)
+            if any(c.isdigit() for c in val):
+                address = val
         elif not city and low.startswith("city:"):
             city = line.split(":", 1)[1].strip()
         elif not state and low.startswith("state:"):
