@@ -158,6 +158,21 @@ def init_db():
     c.execute("UPDATE leads SET email=NULL WHERE email=''")
     # Fix corrupted leads from previous broken syncs
     c.execute("UPDATE leads SET email_sent=0, times_emailed=0, response_received=0 WHERE date_emailed IS NULL AND response_text IS NULL")
+    # Add missing columns if they don't exist yet
+    for col, definition in [
+        ("times_emailed",    "INTEGER DEFAULT 0"),
+        ("last_emailed_date","TEXT"),
+        ("detail_url",       "TEXT"),
+        ("enriched",         "INTEGER DEFAULT 0"),
+        ("dob",              "TEXT"),
+        ("address",          "TEXT"),
+        ("city",             "TEXT"),
+        ("state",            "TEXT"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE leads ADD COLUMN {col} {definition}")
+        except:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
