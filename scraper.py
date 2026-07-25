@@ -311,10 +311,19 @@ def run_scraper(status_callback=None):
                         continue
                     name = cells[3].inner_text().strip()
                     if not name:
-                        # Log first no-name row to find correct cell index
-                        if skipped_noname == 0:
-                            all_cells = [c.inner_text().strip()[:40] for c in cells]
-                            cb(status_callback, f"No-name row cells: {all_cells}")
+                        # 4-cell sub-row (Group/DOB/Email) — attach to previous lead
+                        if pending_lead:
+                            for cell in cells:
+                                txt = cell.inner_text().strip()
+                                low = txt.lower()
+                                if low.startswith("email:") and "@" in txt:
+                                    val = txt.split(":", 1)[1].strip()
+                                    if val and not pending_lead["email"]:
+                                        pending_lead["email"] = val
+                                elif low.startswith("dob :") or low.startswith("dob:"):
+                                    val = txt.split(":", 1)[1].strip()
+                                    if val and not pending_lead["dob"]:
+                                        pending_lead["dob"] = val
                         skipped_noname += 1
                         continue
                     assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
@@ -355,8 +364,9 @@ def run_scraper(status_callback=None):
             # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
+            with_phone = sum(1 for l in leads_data if l.get("phone"))
             type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
-            cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email}")
+            cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
             cb(status_callback, f"Lead types found: {type_samples}")
 
             # ── 5. Enrich all new leads from detail pages ─────────────
