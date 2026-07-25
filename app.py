@@ -348,7 +348,7 @@ def settings():
     c = conn.cursor()
     if request.method == "POST":
         data = request.get_json()
-        for key in ["portal_password", "gmail_app_password", "session_cookie"]:
+        for key in ["portal_username", "portal_password", "gmail_app_password", "session_cookie"]:
             if data.get(key):
                 c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
                 os.environ[key.upper()] = data[key]

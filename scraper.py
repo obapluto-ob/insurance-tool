@@ -111,6 +111,21 @@ def login(page, context, session_cookie, status_callback):
     cb(status_callback, "Saved session expired. Logging in with username/password...")
     username = os.getenv("PORTAL_USERNAME", "")
     password = os.getenv("PORTAL_PASSWORD", "")
+    if not username or not password:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            if not username:
+                c.execute("SELECT value FROM settings WHERE key='portal_username'")
+                row = c.fetchone()
+                username = row[0] if row else username
+            if not password:
+                c.execute("SELECT value FROM settings WHERE key='portal_password'")
+                row = c.fetchone()
+                password = row[0] if row else ""
+            conn.close()
+        except:
+            pass
     cb(status_callback, f"Using username: '{username}' | password set: {bool(password)}")
     for selector in ["input[name='Alias']", "input[type='text']"]:
         try:

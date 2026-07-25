@@ -54,7 +54,7 @@
           <p class="settings-hint">Used to log into planetaltig.com and sync leads.</p>
           <div class="field-group">
             <label>Portal Username</label>
-            <input type="text" value="${s.PORTAL_USERNAME || ''}" disabled/>
+            <input type="text" id="portal_username" value="${s.PORTAL_USERNAME || ''}"/>
           </div>
           <div class="field-group">
             <label>Portal Password ${s.has_portal_password ? '<span class="saved-badge">Saved</span>' : ''}</label>
@@ -159,9 +159,11 @@
   async function saveCredentials() {
     const btn = document.getElementById("cred-btn");
     btn.textContent = "Saving..."; btn.disabled = true;
+    const pu = document.getElementById("portal_username").value;
     const pp = document.getElementById("portal_password").value;
     const gp = document.getElementById("gmail_app_password").value;
     const payload = {};
+    if (pu && !pu.startsWith("•")) payload.portal_username = pu;
     if (pp && !pp.startsWith("•")) payload.portal_password = pp;
     if (gp && !gp.startsWith("•")) payload.gmail_app_password = gp;
     if (!Object.keys(payload).length) {
