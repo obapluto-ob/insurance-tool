@@ -34,6 +34,7 @@
         <div class="actions">
           <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">Sync Portal</button>
           <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">Check Replies</button>
+          <button class="btn btn-danger" onclick="resetSync()">Reset Sync</button>
         </div>
       </div>
       <div class="stats-grid">
@@ -146,6 +147,13 @@
     if (btn) { btn.textContent = "Stopping..."; btn.disabled = true; }
     await apiFetch("/api/cancel", { method: "POST" });
     appendLog("Stop requested...");
+  }
+
+  async function resetSync() {
+    if (!confirm("Reset sync? Next sync will re-scrape all leads from scratch.")) return;
+    const res = await apiFetch("/api/sync/reset", { method: "POST" });
+    const d = await res.json();
+    alert(d.message || "Sync reset.");
   }
 
   async function syncPortal(btn) {
