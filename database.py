@@ -129,7 +129,13 @@ def init_db():
             last_emailed_date TEXT,
             response_received INTEGER DEFAULT 0,
             response_text TEXT,
-            date_responded TEXT
+            date_responded TEXT,
+            detail_url TEXT,
+            enriched INTEGER DEFAULT 0,
+            dob TEXT,
+            address TEXT,
+            city TEXT,
+            state TEXT
         )
     ''')
     c.execute('''

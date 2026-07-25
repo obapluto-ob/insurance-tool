@@ -333,8 +333,8 @@ def run_scraper(status_callback=None):
             cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email}")
             cb(status_callback, f"Lead types found: {type_samples}")
 
-            # ── 5. Enrich missing data from detail pages ───────────────
-            needs_enrich = [l for l in leads_data if (not l.get("email") or not l.get("phone")) and l.get("detail_url")]
+            # ── 5. Enrich all new leads from detail pages ─────────────
+            needs_enrich = [l for l in leads_data if l.get("detail_url")]
             if needs_enrich:
                 cb(status_callback, f"Enriching {len(needs_enrich)} leads from detail pages...")
                 enrich_leads(needs_enrich, page, status_callback)
@@ -358,9 +358,10 @@ def run_scraper(status_callback=None):
 
 
 def enrich_leads(leads, page, status_callback=None):
-    """Visit detail page for each lead missing phone/email and update DB."""
+    """Visit detail page for every unenriched lead and update with full accurate data."""
     enriched = 0
-    for lead in leads:
+    total = len(leads)
+    for i, lead in enumerate(leads):
         if is_cancelled():
             break
         try:
@@ -373,37 +374,53 @@ def enrich_leads(leads, page, status_callback=None):
             except:
                 pass
 
-            # Scrape all text on page looking for phone and email
             body = page.inner_text("body")
-            phone = ""
-            email = ""
+            phone = email = dob = address = city = state = ""
+
             for line in body.split("\n"):
                 line = line.strip()
+                if not line:
+                    continue
                 low = line.lower()
-                if not phone and (low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:")):
+                if not phone and any(low.startswith(p) for p in ["phone:", "cell:", "mobile:", "tel:"]):
                     phone = line.split(":", 1)[1].strip()
-                if not email and low.startswith("email:") and "@" in line:
+                elif not email and low.startswith("email:") and "@" in line:
                     email = line.split(":", 1)[1].strip()
+                elif not dob and (low.startswith("dob:") or low.startswith("date of birth:")):
+                    dob = line.split(":", 1)[1].strip()
+                elif not address and low.startswith("address:"):
+                    address = line.split(":", 1)[1].strip()
+                elif not city and low.startswith("city:"):
+                    city = line.split(":", 1)[1].strip()
+                elif not state and low.startswith("state:"):
+                    state = line.split(":", 1)[1].strip()
 
-            if phone or email:
-                conn = get_connection()
-                c = conn.cursor()
-                c.execute("""
-                    UPDATE leads SET
-                        phone = COALESCE(NULLIF(phone,''), ?),
-                        email = COALESCE(email, NULLIF(?, ''))
-                    WHERE full_name=? AND policy_status=?
-                """, (phone or None, email or None, lead["name"], lead["lead_type"]))
-                conn.commit()
-                conn.close()
-                enriched += 1
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute("""
+                UPDATE leads SET
+                    phone   = COALESCE(NULLIF(phone,''),   NULLIF(?, '')),
+                    email   = COALESCE(email,              NULLIF(?, '')),
+                    dob     = COALESCE(NULLIF(dob,''),     NULLIF(?, '')),
+                    address = COALESCE(NULLIF(address,''), NULLIF(?, '')),
+                    city    = COALESCE(NULLIF(city,''),    NULLIF(?, '')),
+                    state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
+                    enriched = 1
+                WHERE full_name=? AND policy_status=?
+            """, (phone, email, dob, address, city, state, lead["name"], lead["lead_type"]))
+            conn.commit()
+            conn.close()
+            enriched += 1
+
+            if enriched % 10 == 0:
+                cb(status_callback, f"Enriched {enriched}/{total} leads...")
         except:
             continue
-    cb(status_callback, f"Enriched {enriched} leads with phone/email from detail pages.")
+
+    cb(status_callback, f"Enrichment done — {enriched}/{total} leads updated with full data.")
 
 
 def save_leads_bulk(leads, status_callback=None):
-    """Save all leads in one Turso pipeline request — no duplicate per-lead HTTP calls."""
     if not leads:
         return 0
 
@@ -411,7 +428,6 @@ def save_leads_bulk(leads, status_callback=None):
     conn = get_connection()
     c = conn.cursor()
 
-    # Fetch all existing emails and name+policy combos in one query
     c.execute("SELECT email, full_name, policy_status FROM leads")
     existing = c.fetchall()
     existing_emails = {row[0] for row in existing if row[0]}
@@ -419,10 +435,15 @@ def save_leads_bulk(leads, status_callback=None):
 
     new_count = 0
     for lead in leads:
-        name = lead.get("name", "Unknown").strip() or "Unknown"
-        email = lead.get("email", "").strip() or None
-        phone = lead.get("phone", "").strip() or None
+        name          = lead.get("name", "Unknown").strip() or "Unknown"
+        email         = lead.get("email", "").strip() or None
+        phone         = lead.get("phone", "").strip() or None
         policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
+        detail_url    = lead.get("detail_url") or None
+        address       = lead.get("address", "").strip() or None
+        city          = lead.get("city", "").strip() or None
+        state         = lead.get("state", "").strip() or None
+        dob           = lead.get("dob", "").strip() or None
 
         if email:
             if email in existing_emails:
@@ -435,9 +456,10 @@ def save_leads_bulk(leads, status_callback=None):
             existing_no_email.add(key)
 
         c.execute("""
-            INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (name, email, phone, policy_status, "planetaltig.com", now))
+            INSERT OR IGNORE INTO leads
+                (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (name, email, phone, policy_status, "planetaltig.com", now, detail_url, address, city, state, dob))
         new_count += 1
 
     conn.commit()
