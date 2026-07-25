@@ -311,6 +311,10 @@ def run_scraper(status_callback=None):
                         continue
                     name = cells[3].inner_text().strip()
                     if not name:
+                        # Log first no-name row to find correct cell index
+                        if skipped_noname == 0:
+                            all_cells = [c.inner_text().strip()[:40] for c in cells]
+                            cb(status_callback, f"No-name row cells: {all_cells}")
                         skipped_noname += 1
                         continue
                     assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
