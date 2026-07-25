@@ -230,9 +230,6 @@ def run_scraper(status_callback=None):
 
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='last_scraped_page'")
-    row = c.fetchone()
-    start_page = int(row[0]) + 1 if row else 1
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
     row = c.fetchone()
     conn.close()
@@ -240,7 +237,6 @@ def run_scraper(status_callback=None):
 
     has_saved = bool(os.getenv("BROWSER_COOKIES"))
     cb(status_callback, "Starting browser...")
-    cb(status_callback, f"Resuming from page {start_page}...")
     method = "Saved session" if has_saved else ("Session Cookie" if session_cookie else "Username/Password")
     cb(status_callback, f"Login method: {method}")
 
@@ -256,72 +252,27 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
-
-            # Direct URL to the target page — no clicking through pages
-            inbox_url = f"{LEAD_INBOX}?page={start_page}" if start_page > 1 else LEAD_INBOX
-            cb(status_callback, f"Navigating to page {start_page}...")
-            page.goto(inbox_url, timeout=30000)
+            cb(status_callback, "Navigating to Lead Inbox...")
+            page.goto(LEAD_INBOX, timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except:
                 pass
-
-            # Fallback: if direct URL didn't work, click Next to navigate
-            actual_page = 1
-            if start_page > 1:
-                try:
-                    page_indicator = page.query_selector(".pagination .active, .page-item.active")
-                    if page_indicator:
-                        actual_page = int(page_indicator.inner_text().strip())
-                    if actual_page != start_page:
-                        cb(status_callback, f"Direct URL didn't work, clicking through pages...")
-                        page.goto(LEAD_INBOX, timeout=30000)
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=10000)
-                        except:
-                            pass
-                        while actual_page < start_page:
-                            next_btn = page.query_selector("a:has-text('Next')")
-                            if next_btn and next_btn.is_visible():
-                                next_btn.click()
-                                try:
-                                    page.wait_for_load_state("networkidle", timeout=8000)
-                                except:
-                                    pass
-                                actual_page += 1
-                            else:
-                                cb(status_callback, "All pages scraped. Resetting to page 1.")
-                                conn3 = get_connection()
-                                c3 = conn3.cursor()
-                                c3.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-                                conn3.commit()
-                                conn3.close()
-                                browser.close()
-                                return 0
-                except:
-                    pass
 
             if is_cancelled():
                 cb(status_callback, "Sync cancelled.")
                 browser.close()
                 return 0
 
-            cb(status_callback, f"Scraping page {start_page}...")
-
             try:
                 page.wait_for_selector("table tbody tr", timeout=8000)
             except:
-                cb(status_callback, "No table rows found. Resetting page counter.")
-                conn4 = get_connection()
-                c4 = conn4.cursor()
-                c4.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-                conn4.commit()
-                conn4.close()
+                cb(status_callback, "No leads found in table.")
                 browser.close()
                 return 0
 
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} leads on page {start_page}.")
+            cb(status_callback, f"Found {len(rows)} leads. Saving new ones...")
 
             leads_data = []
             for row in rows:
@@ -352,30 +303,11 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
-            # Check for next page
-            has_next = False
-            try:
-                next_btn = page.query_selector("a:has-text('Next')")
-                has_next = bool(next_btn and next_btn.is_visible())
-            except:
-                pass
-
-            conn5 = get_connection()
-            c5 = conn5.cursor()
-            if has_next:
-                c5.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scraped_page', ?)", (str(start_page),))
-                cb(status_callback, f"Page {start_page} done. Next sync → page {start_page + 1}.")
-            else:
-                c5.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-                cb(status_callback, "All pages scraped! Next sync restarts from page 1.")
-            conn5.commit()
-            conn5.close()
-
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
-            cb(status_callback, f"Scraped {len(leads_data)} | New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
             type_samples = set(l["lead_type"] for l in leads_data if l.get("lead_type"))
-            cb(status_callback, f"lead_type values: {list(type_samples)}")
+            cb(status_callback, f"Total: {len(leads_data)} | New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
+            cb(status_callback, f"Lead types: {list(type_samples)}")
 
             browser.close()
             return new_leads
