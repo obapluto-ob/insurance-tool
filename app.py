@@ -201,11 +201,10 @@ def send():
 def sync_reset():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("DELETE FROM settings WHERE key='last_scraped_page'")
-    c.execute("DELETE FROM settings WHERE key='portal_explored'")
+    c.execute("DELETE FROM settings WHERE key='last_sync_date'")
     conn.commit()
     conn.close()
-    return jsonify({"ok": True, "message": "Sync reset. Next sync starts from page 1."})
+    return jsonify({"ok": True, "message": "Sync reset. Next sync will pull all leads from scratch."})
 
 
 @app.route("/api/sync")

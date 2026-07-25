@@ -232,8 +232,11 @@ def run_scraper(status_callback=None):
     c = conn.cursor()
     c.execute("SELECT value FROM settings WHERE key='session_cookie'")
     row = c.fetchone()
-    conn.close()
     session_cookie = row[0] if row else None
+    c.execute("SELECT value FROM settings WHERE key='last_sync_date'")
+    row = c.fetchone()
+    last_sync_date = row[0] if row else None
+    conn.close()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
@@ -272,9 +275,11 @@ def run_scraper(status_callback=None):
 
             # ── 3. Scrape ─────────────────────────────────────────────
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Scraping {len(rows)} leads...")
+            mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
+            cb(status_callback, f"Found {len(rows)} leads — {mode}")
 
             leads_data = []
+            skipped = 0
             for row in rows:
                 if is_cancelled():
                     cb(status_callback, "Sync cancelled.")
@@ -284,10 +289,23 @@ def run_scraper(status_callback=None):
                     cells = row.query_selector_all("td")
                     if len(cells) < 5:
                         continue
+                    assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
+
+                    # Skip leads older than last sync (incremental)
+                    if last_sync_date and assign_date:
+                        try:
+                            from datetime import datetime as dt
+                            lead_dt = dt.strptime(assign_date, "%m/%d/%Y")
+                            last_dt = dt.strptime(last_sync_date, "%m/%d/%Y")
+                            if lead_dt <= last_dt:
+                                skipped += 1
+                                continue
+                        except:
+                            pass
+
                     name = cells[3].inner_text().strip()
                     address = cells[4].inner_text().strip() if len(cells) > 4 else ""
                     lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
-                    assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
                     city = cells[9].inner_text().strip() if len(cells) > 9 else ""
                     state = cells[10].inner_text().strip() if len(cells) > 10 else ""
                     lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
@@ -309,8 +327,16 @@ def run_scraper(status_callback=None):
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
             type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
-            cb(status_callback, f"Scraped {len(leads_data)} — New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
+            cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email}")
             cb(status_callback, f"Lead types found: {type_samples}")
+
+            # ── 5. Save last sync date ────────────────────────────────
+            today = datetime.now().strftime("%m/%d/%Y")
+            conn2 = get_connection()
+            c2 = conn2.cursor()
+            c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync_date', ?)", (today,))
+            conn2.commit()
+            conn2.close()
 
             return new_leads
 
