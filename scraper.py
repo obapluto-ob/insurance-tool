@@ -285,6 +285,7 @@ def run_scraper(status_callback=None):
             skipped = 0
             skipped_short = 0
             skipped_noname = 0
+            pending_lead = None
             for row in rows:
                 if is_cancelled():
                     cb(status_callback, "Sync cancelled.")
@@ -293,8 +294,19 @@ def run_scraper(status_callback=None):
                 try:
                     cells = row.query_selector_all("td")
                     if len(cells) < 4:
-                        if skipped_short == 0:
-                            cb(status_callback, f"First short row has {len(cells)} cells: {[c.inner_text().strip()[:30] for c in cells]}")
+                        # Detail sub-row — attach data to previous lead
+                        if pending_lead and len(cells) >= 2:
+                            for cell in cells:
+                                txt = cell.inner_text().strip()
+                                low = txt.lower()
+                                if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
+                                    val = txt.split(":", 1)[1].strip()
+                                    if val and not pending_lead["phone"]:
+                                        pending_lead["phone"] = val
+                                elif low.startswith("email:") and "@" in txt:
+                                    val = txt.split(":", 1)[1].strip()
+                                    if val and not pending_lead["email"]:
+                                        pending_lead["email"] = val
                         skipped_short += 1
                         continue
                     name = cells[3].inner_text().strip()
@@ -323,12 +335,14 @@ def run_scraper(status_callback=None):
                     link      = row.query_selector("a")
                     detail_url = link.get_attribute("href") if link else None
                     email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
-                    leads_data.append({
+                    lead = {
                         "name": name, "address": address, "lead_tags": clean_tags,
                         "assign_date": assign_date, "city": city, "state": state,
                         "lead_type": lead_type, "detail_url": detail_url,
                         "email": email, "phone": phone, "dob": dob
-                    })
+                    }
+                    leads_data.append(lead)
+                    pending_lead = lead
                 except:
                     continue
 
