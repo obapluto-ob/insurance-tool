@@ -26,8 +26,9 @@ def is_cancelled():
 
 
 def _parse_lead_tags(lead_tags):
-    """Extract email and DOB from lead_tags field. Returns (email, dob, clean_tags)"""
+    """Extract email, phone and DOB from lead_tags field. Returns (email, phone, dob, clean_tags)"""
     email = ""
+    phone = ""
     dob = ""
     clean_lines = []
     for line in lead_tags.replace("\r", "").split("\n"):
@@ -41,9 +42,11 @@ def _parse_lead_tags(lead_tags):
                 email = val
         elif low.startswith("dob :") or low.startswith("dob:"):
             dob = line.split(":", 1)[1].strip()
+        elif low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:") or low.startswith("tel:"):
+            phone = line.split(":", 1)[1].strip()
         else:
             clean_lines.append(line)
-    return email, dob, " | ".join(clean_lines)
+    return email, phone, dob, " | ".join(clean_lines)
 
 
 def login(page, context, session_cookie, status_callback):
@@ -311,12 +314,12 @@ def run_scraper(status_callback=None):
                     lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
                     link = row.query_selector("a")
                     detail_url = link.get_attribute("href") if link else None
-                    email, dob, clean_tags = _parse_lead_tags(lead_tags)
+                    email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
                     leads_data.append({
                         "name": name, "address": address, "lead_tags": clean_tags,
                         "assign_date": assign_date, "city": city, "state": state,
                         "lead_type": lead_type, "detail_url": detail_url,
-                        "email": email, "phone": "", "dob": dob
+                        "email": email, "phone": phone, "dob": dob
                     })
                 except:
                     continue

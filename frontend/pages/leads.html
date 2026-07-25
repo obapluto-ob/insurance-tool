@@ -54,7 +54,7 @@
           <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}" ${missingEmail ? 'disabled title="No email address"' : ''}/></td>
           <td>${l.full_name || "<span class='flag-missing'>Missing</span>"}</td>
           <td>${l.email || "<span class='flag-missing'>Missing</span>"}</td>
-          <td>${l.phone || "—"}</td>
+          <td>${l.phone ? `<a href="tel:${l.phone}" class="call-link">📞 ${l.phone}</a>` : "—"}</td>
           <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
           <td>${l.policy_status && l.policy_status !== "Unknown" ? l.policy_status : "<span class='flag-missing'>Missing</span>"}</td>
           <td>${l.email_sent ? "<span class='status-yes'>Sent</span>" : "<span class='status-no'>No</span>"}</td>
