@@ -262,13 +262,17 @@ def run_scraper(status_callback=None):
             page.goto(LEAD_INBOX, timeout=60000, wait_until="domcontentloaded")
             cb(status_callback, "DOM ready. Waiting for table rows to render...")
             try:
-                page.wait_for_selector("table tbody tr:nth-child(10)", timeout=30000)
+                page.wait_for_selector("table tbody tr", timeout=30000)
             except:
-                cb(status_callback, f"Table did not fully render. Current URL: {page.url}")
+                pass
+            page.wait_for_timeout(2000)
+            row_count = len(page.query_selector_all("table tbody tr"))
+            cb(status_callback, f"Table has {row_count} rows visible.")
+            if row_count < 50:
+                snippet = page.content()[:2000]
+                cb(status_callback, f"HTML snippet: {snippet}")
                 browser.close()
                 return 0
-            # Extra wait for remaining rows to render
-            page.wait_for_timeout(3000)
             cb(status_callback, "Table ready. Scraping rows...")
 
             # ── 3. Scrape ─────────────────────────────────────────────
