@@ -326,8 +326,6 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
-            browser.close()
-
             # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
@@ -335,7 +333,15 @@ def run_scraper(status_callback=None):
             cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email}")
             cb(status_callback, f"Lead types found: {type_samples}")
 
-            # ── 5. Save last sync date ────────────────────────────────
+            # ── 5. Enrich missing data from detail pages ───────────────
+            needs_enrich = [l for l in leads_data if (not l.get("email") or not l.get("phone")) and l.get("detail_url")]
+            if needs_enrich:
+                cb(status_callback, f"Enriching {len(needs_enrich)} leads from detail pages...")
+                enrich_leads(needs_enrich, page, status_callback)
+
+            browser.close()
+
+            # ── 6. Save last sync date ────────────────────────────────
             today = datetime.now().strftime("%m/%d/%Y")
             conn2 = get_connection()
             c2 = conn2.cursor()
@@ -349,6 +355,51 @@ def run_scraper(status_callback=None):
             browser.close()
             cb(status_callback, f"SCRAPER ERROR: {str(e)}")
             return 0
+
+
+def enrich_leads(leads, page, status_callback=None):
+    """Visit detail page for each lead missing phone/email and update DB."""
+    enriched = 0
+    for lead in leads:
+        if is_cancelled():
+            break
+        try:
+            url = lead["detail_url"]
+            if not url.startswith("http"):
+                url = "https://www.planetaltig.com" + url
+            page.goto(url, timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except:
+                pass
+
+            # Scrape all text on page looking for phone and email
+            body = page.inner_text("body")
+            phone = ""
+            email = ""
+            for line in body.split("\n"):
+                line = line.strip()
+                low = line.lower()
+                if not phone and (low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:")):
+                    phone = line.split(":", 1)[1].strip()
+                if not email and low.startswith("email:") and "@" in line:
+                    email = line.split(":", 1)[1].strip()
+
+            if phone or email:
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE leads SET
+                        phone = COALESCE(NULLIF(phone,''), ?),
+                        email = COALESCE(email, NULLIF(?, ''))
+                    WHERE full_name=? AND policy_status=?
+                """, (phone or None, email or None, lead["name"], lead["lead_type"]))
+                conn.commit()
+                conn.close()
+                enriched += 1
+        except:
+            continue
+    cb(status_callback, f"Enriched {enriched} leads with phone/email from detail pages.")
 
 
 def save_leads_bulk(leads, status_callback=None):
