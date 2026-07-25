@@ -166,8 +166,10 @@ def init_db():
         ("state",            "TEXT"),
     ]:
         try:
-            c.execute(f"ALTER TABLE leads ADD COLUMN {col} {definition}")
-            conn.commit()
+            ac = get_connection()
+            ac.cursor().execute(f"ALTER TABLE leads ADD COLUMN {col} {definition}")
+            ac.commit()
+            ac.close()
         except:
             pass
     # Fix any existing empty string emails to NULL
