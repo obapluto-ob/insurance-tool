@@ -511,6 +511,10 @@ def save_leads_bulk(leads, status_callback=None):
     new_count = 0
     for lead in leads:
         name          = lead.get("name", "Unknown").strip() or "Unknown"
+        # Reject sub-rows that slipped through
+        if any(name.lower().startswith(p) for p in ["phone no:", "phone:", "group:", "name:", "email:", "dob:", "cell:", "mobile:"]):
+            continue
+        name          = lead.get("name", "Unknown").strip() or "Unknown"
         email         = lead.get("email", "").strip() or None
         phone         = lead.get("phone", "").strip() or None
         policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
