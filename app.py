@@ -98,9 +98,11 @@ def run_task(fn, *args):
     threading.Thread(target=wrapper, daemon=True).start()
 
 def scraper_task(cb):
+    cb("Starting sync...")
     count = run_scraper(cb)
+    cb("Categorizing leads...")
     categorize_all_leads(cb)
-    cb(f"✅ Sync complete! {count} new leads added.")
+    cb(f"✅ Done — {count} new leads added.")
 
 def replies_task(cb):
     replies = check_replies(cb)

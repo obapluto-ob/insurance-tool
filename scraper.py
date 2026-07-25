@@ -235,11 +235,6 @@ def run_scraper(status_callback=None):
     conn.close()
     session_cookie = row[0] if row else None
 
-    has_saved = bool(os.getenv("BROWSER_COOKIES"))
-    cb(status_callback, "Starting browser...")
-    method = "Saved session" if has_saved else ("Session Cookie" if session_cookie else "Username/Password")
-    cb(status_callback, f"Login method: {method}")
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
             "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"
@@ -248,11 +243,15 @@ def run_scraper(status_callback=None):
         page = context.new_page()
 
         try:
+            # ── 1. Login ──────────────────────────────────────────────
+            cb(status_callback, "Connecting to portal...")
             if not login(page, context, session_cookie, status_callback):
                 browser.close()
                 return 0
+            cb(status_callback, "Logged in ✓")
 
-            cb(status_callback, "Navigating to Lead Inbox...")
+            # ── 2. Navigate ───────────────────────────────────────────
+            cb(status_callback, "Loading Lead Inbox...")
             page.goto(LEAD_INBOX, timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
@@ -271,8 +270,9 @@ def run_scraper(status_callback=None):
                 browser.close()
                 return 0
 
+            # ── 3. Scrape ─────────────────────────────────────────────
             rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"Found {len(rows)} leads. Saving new ones...")
+            cb(status_callback, f"Scraping {len(rows)} leads...")
 
             leads_data = []
             for row in rows:
@@ -303,13 +303,15 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
+            browser.close()
+
+            # ── 4. Save ───────────────────────────────────────────────
             new_leads = sum(1 for l in leads_data if save_lead(l))
             with_email = sum(1 for l in leads_data if l.get("email"))
-            type_samples = set(l["lead_type"] for l in leads_data if l.get("lead_type"))
-            cb(status_callback, f"Total: {len(leads_data)} | New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
-            cb(status_callback, f"Lead types: {list(type_samples)}")
+            type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
+            cb(status_callback, f"Scraped {len(leads_data)} — New: {new_leads} | With email: {with_email} | No email: {len(leads_data) - with_email}")
+            cb(status_callback, f"Lead types found: {type_samples}")
 
-            browser.close()
             return new_leads
 
         except Exception as e:
