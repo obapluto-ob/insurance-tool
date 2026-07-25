@@ -283,6 +283,8 @@ def run_scraper(status_callback=None):
 
             leads_data = []
             skipped = 0
+            skipped_short = 0
+            skipped_noname = 0
             for row in rows:
                 if is_cancelled():
                     cb(status_callback, "Sync cancelled.")
@@ -291,9 +293,13 @@ def run_scraper(status_callback=None):
                 try:
                     cells = row.query_selector_all("td")
                     if len(cells) < 4:
+                        if skipped_short == 0:
+                            cb(status_callback, f"First short row has {len(cells)} cells: {[c.inner_text().strip()[:30] for c in cells]}")
+                        skipped_short += 1
                         continue
                     name = cells[3].inner_text().strip()
                     if not name:
+                        skipped_noname += 1
                         continue
                     assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
 
@@ -326,7 +332,7 @@ def run_scraper(status_callback=None):
                 except:
                     continue
 
-            cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old). Saving to DB...")
+            cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving to DB...")
 
             # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
