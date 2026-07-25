@@ -11,7 +11,6 @@ from database import get_connection
 load_dotenv()
 
 GMAIL = os.getenv("GMAIL_ADDRESS")
-APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 
 def get_signature():
@@ -45,6 +44,7 @@ def get_template_text(template_name, lead_name):
 
 def send_email(to_email: str, lead_id: int, template_name: str, lead_name: str, status_callback=None):
     try:
+        APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
         template = get_template_text(template_name, lead_name)
         if not template:
             if status_callback:
@@ -104,6 +104,7 @@ def send_bulk_emails(leads: list, template_name: str, status_callback=None):
 def check_replies(status_callback=None):
     if status_callback:
         status_callback("Checking Gmail for replies...")
+    APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
     replies = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")

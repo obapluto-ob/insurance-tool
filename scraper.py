@@ -6,7 +6,6 @@ from database import get_connection, init_db
 load_dotenv()
 
 PORTAL_URL = os.getenv("PORTAL_URL", "https://www.planetaltig.com")
-USERNAME = os.getenv("PORTAL_USERNAME")
 LEAD_INBOX = "https://www.planetaltig.com/Lead/Inbox"
 
 BROWSER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".playwright-browsers")
@@ -110,10 +109,12 @@ def login(page, context, session_cookie, status_callback):
         pass
 
     cb(status_callback, "Saved session expired. Logging in with username/password...")
+    username = os.getenv("PORTAL_USERNAME", "")
     password = os.getenv("PORTAL_PASSWORD", "")
+    cb(status_callback, f"Using username: '{username}' | password set: {bool(password)}")
     for selector in ["input[name='Alias']", "input[type='text']"]:
         try:
-            page.fill(selector, USERNAME, timeout=3000)
+            page.fill(selector, username, timeout=3000)
             break
         except:
             continue
