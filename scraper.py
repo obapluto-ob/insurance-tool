@@ -344,7 +344,7 @@ def run_scraper(status_callback=None):
             needs_enrich = [l for l in leads_data if l.get("detail_url")]
             cb(status_callback, f"Starting enrichment for {len(needs_enrich)} leads...")
             if needs_enrich:
-                enrich_leads(needs_enrich, page, status_callback)
+                enrich_leads(needs_enrich, context, status_callback)
             cb(status_callback, "Enrichment complete. Closing browser...")
 
             browser.close()
@@ -365,65 +365,87 @@ def run_scraper(status_callback=None):
             return 0
 
 
-def enrich_leads(leads, page, status_callback=None):
-    """Visit detail page for every unenriched lead and update with full accurate data."""
-    enriched = 0
-    total = len(leads)
-    for i, lead in enumerate(leads):
-        if is_cancelled():
-            break
-        try:
-            url = lead["detail_url"]
-            if not url.startswith("http"):
-                url = "https://www.planetaltig.com" + url
-            page.goto(url, timeout=15000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=8000)
-            except:
-                pass
-
-            body = page.inner_text("body")
-            phone = email = dob = address = city = state = ""
-
-            for line in body.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                low = line.lower()
-                if not phone and any(low.startswith(p) for p in ["phone:", "cell:", "mobile:", "tel:"]):
-                    phone = line.split(":", 1)[1].strip()
-                elif not email and low.startswith("email:") and "@" in line:
-                    email = line.split(":", 1)[1].strip()
-                elif not dob and (low.startswith("dob:") or low.startswith("date of birth:")):
-                    dob = line.split(":", 1)[1].strip()
-                elif not address and low.startswith("address:"):
-                    address = line.split(":", 1)[1].strip()
-                elif not city and low.startswith("city:"):
-                    city = line.split(":", 1)[1].strip()
-                elif not state and low.startswith("state:"):
-                    state = line.split(":", 1)[1].strip()
-
-            conn = get_connection()
-            c = conn.cursor()
-            c.execute("""
-                UPDATE leads SET
-                    phone   = COALESCE(NULLIF(phone,''),   NULLIF(?, '')),
-                    email   = COALESCE(email,              NULLIF(?, '')),
-                    dob     = COALESCE(NULLIF(dob,''),     NULLIF(?, '')),
-                    address = COALESCE(NULLIF(address,''), NULLIF(?, '')),
-                    city    = COALESCE(NULLIF(city,''),    NULLIF(?, '')),
-                    state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
-                    enriched = 1
-                WHERE full_name=? AND policy_status=?
-            """, (phone, email, dob, address, city, state, lead["name"], lead["lead_type"]))
-            conn.commit()
-            conn.close()
-            enriched += 1
-
-            if enriched % 10 == 0:
-                cb(status_callback, f"Enriched {enriched}/{total} leads...")
-        except:
+def _scrape_detail(page, url):
+    """Scrape a single detail page and return field dict."""
+    if not url.startswith("http"):
+        url = "https://www.planetaltig.com" + url
+    page.goto(url, timeout=15000, wait_until="domcontentloaded")
+    body = page.inner_text("body")
+    phone = email = dob = address = city = state = ""
+    for line in body.split("\n"):
+        line = line.strip()
+        if not line:
             continue
+        low = line.lower()
+        if not phone and any(low.startswith(p) for p in ["phone:", "cell:", "mobile:", "tel:"]):
+            phone = line.split(":", 1)[1].strip()
+        elif not email and low.startswith("email:") and "@" in line:
+            email = line.split(":", 1)[1].strip()
+        elif not dob and (low.startswith("dob:") or low.startswith("date of birth:")):
+            dob = line.split(":", 1)[1].strip()
+        elif not address and low.startswith("address:"):
+            address = line.split(":", 1)[1].strip()
+        elif not city and low.startswith("city:"):
+            city = line.split(":", 1)[1].strip()
+        elif not state and low.startswith("state:"):
+            state = line.split(":", 1)[1].strip()
+    return phone, email, dob, address, city, state
+
+
+def _save_enriched(lead, phone, email, dob, address, city, state):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        UPDATE leads SET
+            phone   = COALESCE(NULLIF(phone,''),   NULLIF(?, '')),
+            email   = COALESCE(email,              NULLIF(?, '')),
+            dob     = COALESCE(NULLIF(dob,''),     NULLIF(?, '')),
+            address = COALESCE(NULLIF(address,''), NULLIF(?, '')),
+            city    = COALESCE(NULLIF(city,''),    NULLIF(?, '')),
+            state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
+            enriched = 1
+        WHERE full_name=? AND policy_status=?
+    """, (phone, email, dob, address, city, state, lead["name"], lead["lead_type"]))
+    conn.commit()
+    conn.close()
+
+
+def enrich_leads(leads, context, status_callback=None, workers=5):
+    """Enrich leads in parallel using multiple browser pages."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    total = len(leads)
+    enriched = 0
+
+    pages = [context.new_page() for _ in range(workers)]
+    page_pool = list(range(workers))
+    import threading
+    lock = threading.Lock()
+
+    def enrich_one(idx, lead):
+        slot = idx % workers
+        p = pages[slot]
+        try:
+            phone, email, dob, address, city, state = _scrape_detail(p, lead["detail_url"])
+            _save_enriched(lead, phone, email, dob, address, city, state)
+            return True
+        except:
+            return False
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(enrich_one, i, lead): lead for i, lead in enumerate(leads)}
+        for future in as_completed(futures):
+            if is_cancelled():
+                break
+            with lock:
+                enriched += 1
+                if enriched % 10 == 0 or enriched == total:
+                    cb(status_callback, f"Enriched {enriched}/{total} leads...")
+
+    for p in pages:
+        try:
+            p.close()
+        except:
+            pass
 
     cb(status_callback, f"Enrichment done — {enriched}/{total} leads updated with full data.")
 
