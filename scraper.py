@@ -363,6 +363,8 @@ def run_scraper(status_callback=None):
                     continue
 
             cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving to DB...")
+            empty_type = sum(1 for l in leads_data if not l.get("lead_type"))
+            cb(status_callback, f"Leads with empty lead_type: {empty_type}")
 
             # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
@@ -517,6 +519,8 @@ def save_leads_bulk(leads, status_callback=None):
         name          = lead.get("name", "Unknown").strip() or "Unknown"
         # Reject sub-rows that slipped through
         if any(name.lower().startswith(p) for p in ["phone no:", "phone:", "group:", "name:", "email:", "dob:", "cell:", "mobile:"]):
+            if rejected < 3:
+                status_callback and status_callback(f"Rejected name: {name!r}")
             rejected += 1
             continue
         name          = lead.get("name", "Unknown").strip() or "Unknown"
