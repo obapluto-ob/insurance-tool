@@ -123,8 +123,10 @@ def init_db():
             source TEXT,
             date_scraped TEXT,
             email_sent INTEGER DEFAULT 0,
+            times_emailed INTEGER DEFAULT 0,
             email_type TEXT,
             date_emailed TEXT,
+            last_emailed_date TEXT,
             response_received INTEGER DEFAULT 0,
             response_text TEXT,
             date_responded TEXT

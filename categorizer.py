@@ -6,11 +6,12 @@ SGLW_KEYWORDS = ["union"]
 ACTIVE_KEYWORDS = ["upcoming appointment"]
 PROSPECT_KEYWORDS = ["will kit", "mcgruff", "childsafe", "plus lead", "new address", "no appointment", "past appointment"]
 
+# Who can be emailed and with what template
 EMAILABLE_TEMPLATES = {
     "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
-    "POS":       ["Will Kit", "Plus Leads"],
+    "POS":       ["POS Follow Up", "Will Kit"],
     "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
-    "ACTIVE":    ["Will Kit", "Plus Leads"],
+    # ACTIVE = has upcoming appointment — never email
 }
 
 
@@ -76,14 +77,27 @@ def get_leads_by_category(category=None):
 
 
 def get_emailable_leads():
+    """Returns leads that should be emailed:
+    - Has email address
+    - Not ACTIVE (has appointment)
+    - No response yet
+    - Either never emailed OR last emailed 3+ days ago (follow-up)
+    """
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
         SELECT * FROM leads
         WHERE category IN ('NO_POLICY', 'POS', 'SGLW')
-        AND email_sent = 0
+        AND response_received = 0
         AND email != ''
         AND email IS NOT NULL
+        AND (
+            email_sent = 0
+            OR (
+                last_emailed_date IS NOT NULL
+                AND julianday('now') - julianday(last_emailed_date) >= 3
+            )
+        )
     """)
     columns = [desc[0] for desc in c.description]
     rows = c.fetchall()

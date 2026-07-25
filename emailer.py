@@ -64,8 +64,12 @@ def send_email(to_email: str, lead_id: int, template_name: str, lead_name: str, 
         conn = get_connection()
         c = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("UPDATE leads SET email_sent=1, email_type=?, date_emailed=? WHERE id=?",
-                  (template_name, now, lead_id))
+        c.execute("""
+            UPDATE leads 
+            SET email_sent=1, email_type=?, date_emailed=?, last_emailed_date=?,
+                times_emailed=COALESCE(times_emailed,0)+1
+            WHERE id=?
+        """, (template_name, now, now, lead_id))
         c.execute("INSERT INTO email_log (lead_id, email_type, date_sent, status) VALUES (?,?,?,?)",
                   (lead_id, template_name, now, "sent"))
         conn.commit()
