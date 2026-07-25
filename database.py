@@ -154,11 +154,7 @@ def init_db():
             value TEXT
         )
     ''')
-    # Fix any existing empty string emails to NULL
-    c.execute("UPDATE leads SET email=NULL WHERE email=''")
-    # Fix corrupted leads from previous broken syncs
-    c.execute("UPDATE leads SET email_sent=0, times_emailed=0, response_received=0 WHERE date_emailed IS NULL AND response_text IS NULL")
-    # Add missing columns if they don't exist yet
+    # Add missing columns first before any UPDATE statements
     for col, definition in [
         ("times_emailed",    "INTEGER DEFAULT 0"),
         ("last_emailed_date","TEXT"),
@@ -171,8 +167,13 @@ def init_db():
     ]:
         try:
             c.execute(f"ALTER TABLE leads ADD COLUMN {col} {definition}")
+            conn.commit()
         except:
-            pass  # column already exists
+            pass
+    # Fix any existing empty string emails to NULL
+    c.execute("UPDATE leads SET email=NULL WHERE email=''")
+    # Fix corrupted leads from previous broken syncs
+    c.execute("UPDATE leads SET email_sent=0, times_emailed=0, response_received=0 WHERE date_emailed IS NULL AND response_text IS NULL")
     conn.commit()
     conn.close()
 
