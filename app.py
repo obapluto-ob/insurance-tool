@@ -364,7 +364,7 @@ def settings():
     if saved.get("gmail_app_password"):
         os.environ["GMAIL_APP_PASSWORD"] = saved["gmail_app_password"]
     return jsonify({
-        "PORTAL_USERNAME": os.getenv("PORTAL_USERNAME", ""),
+        "PORTAL_USERNAME": saved.get("portal_username") or os.getenv("PORTAL_USERNAME", ""),
         "GMAIL_ADDRESS": os.getenv("GMAIL_ADDRESS", ""),
         "has_portal_password": bool(saved.get("portal_password")),
         "has_gmail_password": bool(saved.get("gmail_app_password")),
