@@ -150,6 +150,8 @@ def init_db():
     ''')
     # Fix any existing empty string emails to NULL
     c.execute("UPDATE leads SET email=NULL WHERE email=''")
+    # Fix corrupted leads from previous broken syncs
+    c.execute("UPDATE leads SET email_sent=0, times_emailed=0, response_received=0 WHERE date_emailed IS NULL AND response_text IS NULL")
     conn.commit()
     conn.close()
 
