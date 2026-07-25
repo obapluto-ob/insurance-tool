@@ -364,13 +364,21 @@ def run_scraper(status_callback=None):
 
             browser.close()
 
-            # ── 6. Save last sync date ────────────────────────────────
-            today = datetime.now().strftime("%m/%d/%Y")
+            # ── 6. Save last sync date (newest assign_date seen) ──────
+            dates = [l["assign_date"] for l in leads_data if l.get("assign_date")]
+            if dates:
+                try:
+                    newest = max(dates, key=lambda d: datetime.strptime(d, "%m/%d/%Y"))
+                except:
+                    newest = datetime.now().strftime("%m/%d/%Y")
+            else:
+                newest = datetime.now().strftime("%m/%d/%Y")
             conn2 = get_connection()
             c2 = conn2.cursor()
-            c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync_date', ?)", (today,))
+            c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync_date', ?)", (newest,))
             conn2.commit()
             conn2.close()
+            cb(status_callback, f"Last sync date saved as {newest}.")
 
             return new_leads
 
