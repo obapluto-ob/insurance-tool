@@ -259,30 +259,21 @@ def run_scraper(status_callback=None):
             # ── 2. Navigate ───────────────────────────────────────────
             cb(status_callback, "Loading Lead Inbox...")
             cb(status_callback, f"Navigating to {LEAD_INBOX} ...")
-            page.goto(LEAD_INBOX, timeout=60000, wait_until="commit")
-            cb(status_callback, "Navigation committed. Waiting for table rows...")
+            page.goto(LEAD_INBOX, timeout=60000, wait_until="domcontentloaded")
+            cb(status_callback, "DOM ready. Waiting for table rows to render...")
             try:
-                page.wait_for_load_state("domcontentloaded", timeout=30000)
+                page.wait_for_selector("table tbody tr:nth-child(10)", timeout=30000)
             except:
-                pass
-            cb(status_callback, "DOM ready.")
-
-            if is_cancelled():
-                cb(status_callback, "Sync cancelled.")
+                cb(status_callback, f"Table did not fully render. Current URL: {page.url}")
                 browser.close()
                 return 0
-
-            try:
-                page.wait_for_selector("table tbody tr", timeout=15000)
-            except:
-                cb(status_callback, f"No leads table found. Current URL: {page.url}")
-                browser.close()
-                return 0
-
-            cb(status_callback, "Table found. Scraping rows...")
+            # Extra wait for remaining rows to render
+            page.wait_for_timeout(3000)
+            cb(status_callback, "Table ready. Scraping rows...")
 
             # ── 3. Scrape ─────────────────────────────────────────────
             rows = page.query_selector_all("table tbody tr")
+            cb(status_callback, f"query_selector_all returned {len(rows)} rows")
             mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
             cb(status_callback, f"Found {len(rows)} leads — {mode}")
 
