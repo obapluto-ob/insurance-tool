@@ -29,8 +29,6 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-PORTAL_URL = os.getenv("PORTAL_URL", "https://www.planetaltig.com")
-LEAD_INBOX = "https://www.planetaltig.com/Lead/Inbox"
 
 BROWSER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".playwright-browsers")
 # Use a fixed local path — never derive browser path from user-supplied env input
@@ -94,19 +92,27 @@ def _try_inject_saved_cookies(page, context, cookie_json, status_callback):
         context.add_cookies(saved_cookies)
         cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies. Reloading...")
         page.reload(timeout=30000)
-        page.wait_for_load_state("networkidle", timeout=10000)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
     except json.JSONDecodeError as e:
         cb(status_callback, f"Failed to parse saved cookies: {e}")
     except Exception as e:
         log.warning(f"Cookie injection error: {type(e).__name__}: {e}")
 
 
-def _try_inject_session_cookie(page, context, session_cookie, status_callback):
+def _try_inject_session_cookie(page, context, session_cookie, status_callback, portal_url=None):
     cb(status_callback, "Injecting manual session cookie...")
+    from urllib.parse import urlparse
+    domain = urlparse(portal_url or _get_portal_url()).netloc
     for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
-        context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
+        context.add_cookies([{"name": name, "value": session_cookie, "domain": domain, "path": "/", "httpOnly": True, "secure": True}])
     page.reload(timeout=30000)
-    page.wait_for_load_state("networkidle", timeout=10000)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
 
 
 def _load_credentials_from_db(username, password):
@@ -146,7 +152,10 @@ def _fill_login_form(page, username, password, status_callback):
             break
         except Exception as e:
             log.warning(f"Could not click submit with selector {selector!r}: {type(e).__name__}")
-    page.wait_for_load_state("networkidle", timeout=10000)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
 
 
 def _attempt_session_login(page, context, session_cookie, status_callback, portal_url=None, cookie_key="browser_cookies"):
@@ -157,14 +166,14 @@ def _attempt_session_login(page, context, session_cookie, status_callback, porta
 
     page.goto(portal_url, timeout=30000)
     try:
-        page.wait_for_load_state("networkidle", timeout=10000)
-    except TimeoutError:
-        log.warning("networkidle timeout on initial portal load")
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
 
     if cookie_json:
         _try_inject_saved_cookies(page, context, cookie_json, status_callback)
     if session_cookie:
-        _try_inject_session_cookie(page, context, session_cookie, status_callback)
+        _try_inject_session_cookie(page, context, session_cookie, status_callback, portal_url=portal_url)
 
     cb(status_callback, f"Cookie check - current URL: {page.url}")
     return "Login" not in page.url and "login" not in page.url
@@ -210,7 +219,7 @@ def _clear_expired_cookies(status_callback):
     try:
         conn = get_connection()
         c = conn.cursor()
-        c.execute("DELETE FROM settings WHERE key='browser_cookies'")
+        c.execute("DELETE FROM settings WHERE key IN ('browser_cookies', 'manual_browser_cookies')")
         conn.commit()
         conn.close()
         os.environ.pop("BROWSER_COOKIES", None)
@@ -501,7 +510,7 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
 
             cb(status_callback, "Loading Lead Inbox...")
             row_count = _navigate_to_inbox(page, status_callback, portal_url=portal_url, inbox_url_key=inbox_url_key)
-            if row_count < 50:
+            if row_count < 1:
                 cb(status_callback, f"HTML snippet: {page.content()[:2000]}")
                 browser.close()
                 return 0
