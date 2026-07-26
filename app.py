@@ -106,6 +106,14 @@ def scraper_task(cb):
     categorize_all_leads(cb)
     cb(f"✅ Done — {count} new leads added.")
 
+def manual_sync_task(cb, portal_url, portal_username, portal_password):
+    cb("Starting manual sync...")
+    count = run_scraper(cb, override_url=portal_url, override_username=portal_username, override_password=portal_password)
+    cb("Categorizing leads...")
+    categorize_all_leads(cb)
+    cb(f"✅ Done — {count} new leads added.")
+
+
 def replies_task(cb):
     replies = check_replies(cb)
     cb(f"✅ Found {len(replies)} new replies.")
@@ -195,6 +203,53 @@ def send():
     conn.close()
     run_task(send_task, leads_data, template)
     return jsonify({"ok": True})
+
+
+@app.route("/api/manual-sync", methods=["POST"])
+@protected
+def manual_sync():
+    if task_status["running"]:
+        return jsonify({"ok": False, "message": "A sync is already running"})
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT key, value FROM settings WHERE key IN ('manual_portal_url','manual_portal_username','manual_portal_password')")
+    saved = dict(c.fetchall())
+    conn.close()
+    portal_url      = saved.get("manual_portal_url", "")
+    portal_username = saved.get("manual_portal_username", "")
+    portal_password = saved.get("manual_portal_password", "")
+    if not portal_url or not portal_username or not portal_password:
+        return jsonify({"ok": False, "message": "Manual portal credentials not set. Go to Settings → Manual Sync."})
+    run_task(manual_sync_task, portal_url, portal_username, portal_password)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/manual-settings", methods=["GET", "POST", "DELETE"])
+@protected
+def manual_settings():
+    conn = get_connection()
+    c = conn.cursor()
+    if request.method == "DELETE":
+        c.execute("DELETE FROM settings WHERE key IN ('manual_portal_url','manual_portal_username','manual_portal_password')")
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+    if request.method == "POST":
+        data = request.get_json()
+        for key in ["manual_portal_url", "manual_portal_username", "manual_portal_password"]:
+            if data.get(key):
+                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+    c.execute("SELECT key, value FROM settings WHERE key IN ('manual_portal_url','manual_portal_username','manual_portal_password')")
+    saved = dict(c.fetchall())
+    conn.close()
+    return jsonify({
+        "manual_portal_url":      saved.get("manual_portal_url", ""),
+        "manual_portal_username": saved.get("manual_portal_username", ""),
+        "has_manual_password":    bool(saved.get("manual_portal_password")),
+    })
 
 
 @app.route("/api/sync/reset", methods=["POST"])

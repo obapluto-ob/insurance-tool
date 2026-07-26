@@ -38,9 +38,8 @@ if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = BROWSER_PATH
 
 
-def cb(status_callback, msg):
-    if status_callback:
-        status_callback(msg)
+def _get_portal_url():
+    return os.getenv("PORTAL_URL", "https://www.planetaltig.com").rstrip("/")
 
 
 def is_cancelled():
@@ -75,10 +74,10 @@ def _parse_lead_tags(lead_tags):
     return LeadTags(email=email, phone=phone, dob=dob, clean_tags=" | ".join(clean_lines))
 
 
-def _load_cookies_from_db():
+def _load_cookies_from_db(cookie_key="browser_cookies"):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
+    c.execute("SELECT value FROM settings WHERE key=?", (cookie_key,))
     row = c.fetchone()
     conn.close()
     return row[0] if row else None
@@ -145,11 +144,13 @@ def _fill_login_form(page, username, password, status_callback):
     page.wait_for_load_state("networkidle", timeout=10000)
 
 
-def _attempt_session_login(page, context, session_cookie, status_callback):
+def _attempt_session_login(page, context, session_cookie, status_callback, portal_url=None, cookie_key="browser_cookies"):
     """Try cookies/session. Returns True if already logged in, False if login page still showing."""
-    cookie_json = os.getenv("BROWSER_COOKIES") or _load_cookies_from_db()
+    cookie_json = (_load_cookies_from_db(cookie_key) if cookie_key != "browser_cookies"
+                   else os.getenv("BROWSER_COOKIES") or _load_cookies_from_db())
+    portal_url = portal_url or _get_portal_url()
 
-    page.goto(PORTAL_URL, timeout=30000)
+    page.goto(portal_url, timeout=30000)
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
     except TimeoutError:
@@ -164,10 +165,12 @@ def _attempt_session_login(page, context, session_cookie, status_callback):
     return "Login" not in page.url and "login" not in page.url
 
 
-def _attempt_password_login(page, context, status_callback):
+def _attempt_password_login(page, context, status_callback, cookie_key="browser_cookies"):
     """Fill and submit login form, check result. Returns True on success."""
-    username = os.getenv("PORTAL_USERNAME", "")
-    password = os.getenv("PORTAL_PASSWORD", "")
+    username = os.getenv("_MANUAL_PORTAL_USERNAME") or os.getenv("PORTAL_USERNAME", "")
+    password = os.getenv("_MANUAL_PORTAL_PASSWORD") or os.getenv("PORTAL_PASSWORD", "")
+    os.environ.pop("_MANUAL_PORTAL_USERNAME", None)
+    os.environ.pop("_MANUAL_PORTAL_PASSWORD", None)
     if not username or not password:
         username, password = _load_credentials_from_db(username, password)
     cb(status_callback, f"Using username: '{username}' | password set: {bool(password)}")
@@ -177,7 +180,7 @@ def _attempt_password_login(page, context, status_callback):
 
     if "Login" not in page.url and "login" not in page.url:
         cb(status_callback, "Login successful.")
-        _save_cookies(context, status_callback)
+        _save_cookies(context, status_callback, cookie_key=cookie_key)
         return True
 
     page_error = ""
@@ -210,8 +213,8 @@ def _clear_expired_cookies(status_callback):
         cb(status_callback, f"Could not clear expired cookies: {e}")
 
 
-def login(page, context, session_cookie, status_callback):
-    if _attempt_session_login(page, context, session_cookie, status_callback):
+def login(page, context, session_cookie, status_callback, portal_url=None, cookie_key="browser_cookies"):
+    if _attempt_session_login(page, context, session_cookie, status_callback, portal_url=portal_url, cookie_key=cookie_key):
         cb(status_callback, "Logged in via saved session.")
         return True
 
@@ -221,22 +224,21 @@ def login(page, context, session_cookie, status_callback):
 
     cb(status_callback, "Saved session expired. Logging in with username/password...")
     _clear_expired_cookies(status_callback)
-    return _attempt_password_login(page, context, status_callback)
+    return _attempt_password_login(page, context, status_callback, cookie_key=cookie_key)
 
 
-def _save_cookies(context, status_callback=None):
+def _save_cookies(context, status_callback=None, cookie_key="browser_cookies"):
     try:
         cookies = context.cookies()
         cookie_json = json.dumps(cookies)
-
         conn = get_connection()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("browser_cookies", cookie_json))
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (cookie_key, cookie_json))
         conn.commit()
         conn.close()
-
-        os.environ["BROWSER_COOKIES"] = cookie_json
-        _push_cookies_to_render(cookie_json, status_callback)
+        if cookie_key == "browser_cookies":
+            os.environ["BROWSER_COOKIES"] = cookie_json
+            _push_cookies_to_render(cookie_json, status_callback)
         cb(status_callback, f"Session saved ({len(cookies)} cookies). Next sync will skip login.")
     except Exception as e:
         cb(status_callback, f"Could not save session: {e}")
@@ -276,10 +278,84 @@ def _load_sync_settings():
     return session_cookie, last_sync_date
 
 
-def _navigate_to_inbox(page, status_callback):
-    """Navigate to Lead Inbox and wait for table. Returns row count or 0 on failure."""
-    cb(status_callback, f"Navigating to {LEAD_INBOX} ...")
-    page.goto(LEAD_INBOX, timeout=60000, wait_until="domcontentloaded")
+def _find_table_page(page, portal_url, status_callback):
+    """After login, scan all nav links to find a page that has a scrapeable table."""
+    cb(status_callback, "Scanning portal for a page with lead data...")
+    try:
+        links = page.query_selector_all("a[href]")
+        hrefs = []
+        for link in links:
+            href = (link.get_attribute("href") or "").strip()
+            if not href or href.startswith("#") or href.startswith("javascript") or href.startswith("mailto"):
+                continue
+            full = href if href.startswith("http") else portal_url.rstrip("/") + "/" + href.lstrip("/")
+            if portal_url.split("//")[1].split("/")[0] in full:  # same domain only
+                hrefs.append(full)
+        hrefs = list(dict.fromkeys(hrefs))  # dedupe, preserve order
+        cb(status_callback, f"Found {len(hrefs)} internal links to check...")
+        for url in hrefs:
+            if is_cancelled():
+                return None
+            try:
+                page.goto(url, timeout=15000, wait_until="domcontentloaded")
+                page.wait_for_timeout(1000)
+                rows = page.query_selector_all("table tbody tr")
+                if len(rows) >= 5:
+                    cb(status_callback, f"Found scrapeable table at: {url} ({len(rows)} rows)")
+                    return url
+            except Exception as e:
+                log.warning(f"Could not check {url}: {e}")
+                continue
+    except Exception as e:
+        log.warning(f"Link scan error: {e}")
+    return None
+
+
+def _get_saved_inbox_url(url_key):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key=?", (url_key,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def _save_inbox_url(url_key, url):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (url_key, url))
+    conn.commit()
+    conn.close()
+
+
+def _navigate_to_inbox(page, status_callback, portal_url=None, inbox_url_key="inbox_url"):
+    """Go to saved inbox URL if known, otherwise scan portal to find it. Returns row count."""
+    base = portal_url or _get_portal_url()
+    saved_url = _get_saved_inbox_url(inbox_url_key)
+
+    if saved_url:
+        cb(status_callback, f"Using saved inbox URL: {saved_url}")
+        try:
+            page.goto(saved_url, timeout=60000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            row_count = len(page.query_selector_all("table tbody tr"))
+            if row_count >= 5:
+                cb(status_callback, f"Table has {row_count} rows visible.")
+                return row_count
+            cb(status_callback, "Saved inbox URL no longer has data — re-scanning portal...")
+        except Exception as e:
+            log.warning(f"Saved inbox URL failed: {e} — re-scanning portal...")
+
+    # Scan portal to find scrapeable page
+    found_url = _find_table_page(page, base, status_callback)
+    if not found_url:
+        cb(status_callback, "Could not find a scrapeable page on this portal.")
+        return 0
+
+    _save_inbox_url(inbox_url_key, found_url)
+    cb(status_callback, f"Inbox URL saved for future syncs: {found_url}")
+
+    page.goto(found_url, timeout=60000, wait_until="domcontentloaded")
     cb(status_callback, "DOM ready. Waiting for table rows to render...")
     try:
         page.wait_for_selector("table tbody tr", timeout=30000)
@@ -384,7 +460,7 @@ def _save_sync_date(leads_data):
     return newest
 
 
-def run_scraper(status_callback=None):
+def run_scraper(status_callback=None, override_url=None, override_username=None, override_password=None):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -393,6 +469,16 @@ def run_scraper(status_callback=None):
 
     init_db()
     session_cookie, last_sync_date = _load_sync_settings()
+
+    # Use override creds if provided (manual sync), otherwise fall back to env/DB
+    portal_url = override_url.rstrip("/") if override_url else _get_portal_url()
+    is_manual = bool(override_url)
+    cookie_key = "manual_browser_cookies" if is_manual else "browser_cookies"
+    inbox_url_key = "manual_inbox_url" if is_manual else "inbox_url"
+    if override_username:
+        os.environ["_MANUAL_PORTAL_USERNAME"] = override_username
+    if override_password:
+        os.environ["_MANUAL_PORTAL_PASSWORD"] = override_password
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
@@ -403,13 +489,13 @@ def run_scraper(status_callback=None):
 
         try:
             cb(status_callback, "Connecting to portal...")
-            if not login(page, context, session_cookie, status_callback):
+            if not login(page, context, session_cookie, status_callback, portal_url=portal_url, cookie_key=cookie_key):
                 browser.close()
                 return 0
             cb(status_callback, "Logged in ✓")
 
             cb(status_callback, "Loading Lead Inbox...")
-            row_count = _navigate_to_inbox(page, status_callback)
+            row_count = _navigate_to_inbox(page, status_callback, portal_url=portal_url, inbox_url_key=inbox_url_key)
             if row_count < 50:
                 cb(status_callback, f"HTML snippet: {page.content()[:2000]}")
                 browser.close()
@@ -454,7 +540,7 @@ def run_scraper(status_callback=None):
 def _scrape_detail(page, url):
     """Scrape a single detail page and return field dict."""
     if not url.startswith("http"):
-        url = "https://www.planetaltig.com" + url
+        url = _get_portal_url() + url
     page.goto(url, timeout=15000, wait_until="domcontentloaded")
     body = page.inner_text("body")
     phone = email = dob = address = city = state = ""

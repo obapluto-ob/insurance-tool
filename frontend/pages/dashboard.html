@@ -33,6 +33,7 @@
         <h1>Dashboard</h1>
         <div class="actions">
           <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">Sync Portal</button>
+          <button class="btn btn-secondary" id="manual-sync-btn" onclick="manualSync(this)">Manual Sync</button>
           <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">Check Replies</button>
           <button class="btn btn-danger" onclick="resetSync()">Reset Sync</button>
         </div>
@@ -135,6 +136,8 @@
           appendLog("--- Sync finished. Close this panel when ready. ---");
           const btn = document.getElementById("sync-btn");
           if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
+          const manualBtn = document.getElementById("manual-sync-btn");
+          if (manualBtn) { manualBtn.textContent = "Manual Sync"; manualBtn.disabled = false; }
           const cancelBtn = document.getElementById("cancel-btn");
           if (cancelBtn) cancelBtn.style.display = "none";
         }
@@ -154,6 +157,20 @@
     const res = await apiFetch("/api/sync/reset", { method: "POST" });
     const d = await res.json();
     alert(d.message || "Sync reset.");
+  }
+
+  async function manualSync(btn) {
+    btn.textContent = "Syncing...";
+    btn.disabled = true;
+    openLog("Manual Sync Log — Live Output");
+    appendLog("Connecting to manual portal...");
+    const res = await apiFetch("/api/manual-sync", { method: "POST" });
+    const d = await res.json();
+    if (!d.ok) {
+      appendLog("ERROR: " + (d.message || "Failed to start manual sync."));
+      btn.textContent = "Manual Sync"; btn.disabled = false; return;
+    }
+    startLogPolling();
   }
 
   async function syncPortal(btn) {

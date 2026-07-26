@@ -12,7 +12,12 @@
   <form method="POST">
     <div class="settings-section">
       <h3>🌐 Portal Credentials</h3>
-      <p class="settings-hint">Used to log into planetaltig.com and sync your leads.</p>
+      <p class="settings-hint">Used to log into the portal and sync your leads.</p>
+      <div class="field-group">
+        <label>Portal URL</label>
+        <input type="text" id="portalUrl" placeholder="e.g. https://www.newportal.com"/>
+        <span class="field-note">Only change this if your company moves to a new website</span>
+      </div>
       <div class="field-group">
         <label>Portal Username</label>
         <input type="text" value="{{ current.get('PORTAL_USERNAME', '') }}" disabled/>

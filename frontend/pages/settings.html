@@ -17,13 +17,15 @@
   async function load() {
     let s, sig, tpl;
     try {
-      const [sRes, sigRes, tplRes] = await Promise.all([
+      const [sRes, sigRes, tplRes, msRes] = await Promise.all([
         apiFetch("/api/settings"),
         apiFetch("/api/signature"),
         apiFetch("/api/templates"),
+        apiFetch("/api/manual-settings"),
       ]);
-      if (!sRes.ok || !sigRes.ok || !tplRes.ok) throw new Error(`HTTP ${sRes.status}/${sigRes.status}/${tplRes.status}`);
-      [s, sig, tpl] = await Promise.all([sRes.json(), sigRes.json(), tplRes.json()]);
+      if (!sRes.ok || !sigRes.ok || !tplRes.ok || !msRes.ok) throw new Error(`HTTP ${sRes.status}/${sigRes.status}/${tplRes.status}/${msRes.status}`);
+      let ms;
+      [s, sig, tpl, ms] = await Promise.all([sRes.json(), sigRes.json(), tplRes.json(), msRes.json()]);
     } catch (err) {
       console.error("[settings] load failed:", err);
       document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load settings. Check console (F12).</div>`;
@@ -50,8 +52,30 @@
         </div>
 
         <div class="settings-section">
+          <h3>🔄 Manual Sync Portal</h3>
+          <p class="settings-hint">Use this when your company moves to a new portal. Completely separate from the main sync — your existing credentials are never touched.</p>
+          <div class="field-group">
+            <label>New Portal URL</label>
+            <input type="text" id="manual_portal_url" value="${ms.manual_portal_url || ''}" placeholder="e.g. https://www.newportal.com"/>
+          </div>
+          <div class="field-group">
+            <label>New Portal Username</label>
+            <input type="text" id="manual_portal_username" value="${ms.manual_portal_username || ''}" placeholder="Your username on the new portal"/>
+          </div>
+          <div class="field-group">
+            <label>New Portal Password ${ms.has_manual_password ? '<span class="saved-badge">Saved</span>' : ''}</label>
+            <div class="pass-wrap">
+              <input type="password" id="manual_portal_password" value="${ms.has_manual_password ? '••••••••••••' : ''}" placeholder="Your password on the new portal"/>
+              <button class="eye-btn" onclick="togglePass('manual_portal_password', this)">Show</button>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="manual-btn" onclick="saveManualSettings()">Save Manual Sync Settings</button>
+          <button class="btn btn-danger" id="manual-clear-btn" onclick="clearManualSettings()">Clear / Delete</button>
+        </div>
+
+        <div class="settings-section">
           <h3>Portal Credentials</h3>
-          <p class="settings-hint">Used to log into planetaltig.com and sync leads.</p>
+          <p class="settings-hint">Used to log into the main portal and sync leads.</p>
           <div class="field-group">
             <label>Portal Username</label>
             <input type="text" id="portal_username" value="${s.PORTAL_USERNAME || ''}"/>
@@ -210,6 +234,38 @@
     const d = await res.json();
     showMsg(d.ok ? "Templates saved!" : "Failed to save.", d.ok);
     btn.textContent = "Save Templates"; btn.disabled = false;
+  }
+
+  async function clearManualSettings() {
+    if (!confirm("Delete all manual sync credentials? This cannot be undone.")) return;
+    const btn = document.getElementById("manual-clear-btn");
+    btn.textContent = "Clearing..."; btn.disabled = true;
+    const res = await apiFetch("/api/manual-settings", { method: "DELETE" });
+    const d = await res.json();
+    showMsg(d.ok ? "Manual sync credentials cleared." : "Failed to clear.", d.ok);
+    btn.textContent = "Clear / Delete"; btn.disabled = false;
+    if (d.ok) load();
+  }
+
+  async function saveManualSettings() {
+    const btn = document.getElementById("manual-btn");
+    btn.textContent = "Saving..."; btn.disabled = true;
+    const url = document.getElementById("manual_portal_url").value.trim();
+    const user = document.getElementById("manual_portal_username").value.trim();
+    const pass = document.getElementById("manual_portal_password").value;
+    const payload = {};
+    if (url) payload.manual_portal_url = url;
+    if (user) payload.manual_portal_username = user;
+    if (pass && !pass.startsWith("•")) payload.manual_portal_password = pass;
+    if (!Object.keys(payload).length) {
+      showMsg("No changes to save.", false);
+      btn.textContent = "Save Manual Sync Settings"; btn.disabled = false; return;
+    }
+    const res = await apiFetch("/api/manual-settings", { method: "POST", body: JSON.stringify(payload) });
+    const d = await res.json();
+    showMsg(d.ok ? "Manual sync settings saved!" : "Failed to save.", d.ok);
+    btn.textContent = "Save Manual Sync Settings"; btn.disabled = false;
+    if (d.ok) load();
   }
 
   load();
