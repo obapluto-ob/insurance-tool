@@ -90,6 +90,8 @@ def protected(f):
 
 # ── Background tasks ──────────────────────────────────
 def run_task(fn, *args):
+    if task_status.get("running"):
+        return
     def wrapper():
         task_status["running"] = True
         task_status["logs"] = []

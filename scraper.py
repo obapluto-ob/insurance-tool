@@ -559,7 +559,7 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
             needs_enrich = [l for l in leads_data if l.get("detail_url")]
             cb(status_callback, f"Starting enrichment for {len(needs_enrich)} leads...")
             if needs_enrich:
-                enrich_leads(needs_enrich, context, status_callback)
+                enrich_leads(needs_enrich, context, status_callback, workers=2)
             cb(status_callback, "Enrichment complete. Closing browser...")
 
             browser.close()
