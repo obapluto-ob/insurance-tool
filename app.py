@@ -21,7 +21,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False)
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False, allow_headers=["Content-Type", "Authorization"], methods=["GET", "POST", "OPTIONS"])
 app.register_blueprint(trader)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")

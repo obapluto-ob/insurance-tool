@@ -306,8 +306,12 @@ def _find_table_page(page, portal_url, status_callback):
             if portal_url.split("//")[1].split("/")[0] in full:  # same domain only
                 hrefs.append(full)
         hrefs = list(dict.fromkeys(hrefs))  # dedupe, preserve order
-        cb(status_callback, f"Found {len(hrefs)} internal links to check...")
-        for url in hrefs:
+        priority_kw = ["lead", "inbox", "prospect", "contact", "pipeline", "member", "client"]
+        priority = [u for u in hrefs if any(k in u.lower() for k in priority_kw)]
+        rest = [u for u in hrefs if u not in priority]
+        ordered = priority + rest
+        cb(status_callback, f"Found {len(ordered)} links ({len(priority)} priority) to check...")
+        for url in ordered:
             if is_cancelled():
                 return None
             try:
