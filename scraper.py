@@ -317,7 +317,13 @@ def _find_table_page(page, portal_url, status_callback):
             try:
                 is_priority = url in priority
                 page.goto(url, timeout=15000, wait_until="domcontentloaded")
-                page.wait_for_timeout(3000 if is_priority else 1000)
+                if is_priority:
+                    try:
+                        page.wait_for_selector("table tbody tr", timeout=8000)
+                    except Exception:
+                        pass
+                else:
+                    page.wait_for_timeout(1000)
                 rows = page.query_selector_all("table tbody tr")
                 cb(status_callback, f"Checked: {url} → {len(rows)} rows")
                 if len(rows) >= 5:

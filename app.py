@@ -22,6 +22,14 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False, allow_headers=["Content-Type", "Authorization"], methods=["GET", "POST", "OPTIONS"])
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
 app.register_blueprint(trader)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme123")
