@@ -15,7 +15,7 @@
   renderNav("Settings");
 
   async function load() {
-    let s, sig, tpl;
+    let s, sig, tpl, ms;
     try {
       const [sRes, sigRes, tplRes, msRes] = await Promise.all([
         apiFetch("/api/settings"),
@@ -24,7 +24,6 @@
         apiFetch("/api/manual-settings"),
       ]);
       if (!sRes.ok || !sigRes.ok || !tplRes.ok || !msRes.ok) throw new Error(`HTTP ${sRes.status}/${sigRes.status}/${tplRes.status}/${msRes.status}`);
-      let ms;
       [s, sig, tpl, ms] = await Promise.all([sRes.json(), sigRes.json(), tplRes.json(), msRes.json()]);
     } catch (err) {
       console.error("[settings] load failed:", err);
