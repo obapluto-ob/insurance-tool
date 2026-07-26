@@ -315,15 +315,29 @@ def _find_table_page(page, portal_url, status_callback):
             if is_cancelled():
                 return None
             try:
+                is_priority = url in priority
                 page.goto(url, timeout=15000, wait_until="domcontentloaded")
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(3000 if is_priority else 1000)
                 rows = page.query_selector_all("table tbody tr")
+                cb(status_callback, f"Checked: {url} → {len(rows)} rows")
                 if len(rows) >= 5:
                     cb(status_callback, f"Found scrapeable table at: {url} ({len(rows)} rows)")
                     return url
             except Exception as e:
                 log.warning(f"Could not check {url}: {e}")
                 continue
+        # nothing found — try saving the inbox URL directly as last resort
+        inbox_url = portal_url.rstrip("/") + "/Lead/Inbox"
+        cb(status_callback, f"No table found via scan. Trying direct path: {inbox_url}")
+        try:
+            page.goto(inbox_url, timeout=20000, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)
+            rows = page.query_selector_all("table tbody tr")
+            if len(rows) >= 1:
+                cb(status_callback, f"Found scrapeable table at: {inbox_url} ({len(rows)} rows)")
+                return inbox_url
+        except Exception as e:
+            log.warning(f"Direct inbox fallback failed: {e}")
     except Exception as e:
         log.warning(f"Link scan error: {e}")
     return None
