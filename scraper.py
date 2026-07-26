@@ -38,6 +38,11 @@ if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = BROWSER_PATH
 
 
+def cb(status_callback, msg):
+    if status_callback:
+        status_callback(msg)
+
+
 def _get_portal_url():
     return os.getenv("PORTAL_URL", "https://www.planetaltig.com").rstrip("/")
 
