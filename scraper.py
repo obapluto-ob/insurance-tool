@@ -1,7 +1,31 @@
 import os
-from datetime import datetime
+import json
+import logging
+import threading
+import requests
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import NamedTuple
 from dotenv import load_dotenv
 from database import get_connection, init_db
+
+
+class LeadDetail(NamedTuple):
+    phone: str
+    email: str
+    dob: str
+    address: str
+    city: str
+    state: str
+
+
+class LeadTags(NamedTuple):
+    email: str
+    phone: str
+    dob: str
+    clean_tags: str
+
+log = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -9,7 +33,9 @@ PORTAL_URL = os.getenv("PORTAL_URL", "https://www.planetaltig.com")
 LEAD_INBOX = "https://www.planetaltig.com/Lead/Inbox"
 
 BROWSER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".playwright-browsers")
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", BROWSER_PATH)
+# Use a fixed local path — never derive browser path from user-supplied env input
+if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = BROWSER_PATH
 
 
 def cb(status_callback, msg):
@@ -21,7 +47,7 @@ def is_cancelled():
     try:
         from app import task_status
         return task_status.get("cancel", False)
-    except:
+    except ImportError:
         return False
 
 
@@ -46,61 +72,133 @@ def _parse_lead_tags(lead_tags):
             phone = line.split(":", 1)[1].strip()
         else:
             clean_lines.append(line)
-    return email, phone, dob, " | ".join(clean_lines)
+    return LeadTags(email=email, phone=phone, dob=dob, clean_tags=" | ".join(clean_lines))
 
 
-def login(page, context, session_cookie, status_callback):
-    import json
+def _load_cookies_from_db():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
 
-    cookie_json = os.getenv("BROWSER_COOKIES")
-    if not cookie_json:
+
+def _try_inject_saved_cookies(page, context, cookie_json, status_callback):
+    try:
+        saved_cookies = json.loads(cookie_json)
+        context.add_cookies(saved_cookies)
+        cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies. Reloading...")
+        page.reload(timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except json.JSONDecodeError as e:
+        cb(status_callback, f"Failed to parse saved cookies: {e}")
+    except Exception as e:
+        log.warning(f"Cookie injection error: {type(e).__name__}: {e}")
+
+
+def _try_inject_session_cookie(page, context, session_cookie, status_callback):
+    cb(status_callback, "Injecting manual session cookie...")
+    for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
+        context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
+    page.reload(timeout=30000)
+    page.wait_for_load_state("networkidle", timeout=10000)
+
+
+def _load_credentials_from_db(username, password):
+    try:
         conn = get_connection()
         c = conn.cursor()
-        c.execute("SELECT value FROM settings WHERE key='browser_cookies'")
-        row = c.fetchone()
+        if not username:
+            c.execute("SELECT value FROM settings WHERE key='portal_username'")
+            row = c.fetchone()
+            username = row[0] if row else username
+        if not password:
+            c.execute("SELECT value FROM settings WHERE key='portal_password'")
+            row = c.fetchone()
+            password = row[0] if row else ""
         conn.close()
-        cookie_json = row[0] if row else None
+    except Exception as e:
+        log.warning(f"Could not load credentials from DB: {e}")
+    return username, password
 
-    # Navigate first so domain is set, then inject cookies and reload
+
+def _fill_login_form(page, username, password, status_callback):
+    for selector in ["input[name='Alias']", "input[type='text']"]:
+        try:
+            page.fill(selector, username, timeout=3000)
+            break
+        except Exception as e:
+            log.warning(f"Could not fill username with selector {selector!r}: {type(e).__name__}")
+    for selector in ["input[name='Password']", "input[type='password']"]:
+        try:
+            page.fill(selector, password, timeout=3000)
+            break
+        except Exception as e:
+            log.warning(f"Could not fill password with selector {selector!r}: {type(e).__name__}")
+    for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')"]:
+        try:
+            page.click(selector, timeout=3000)
+            break
+        except Exception as e:
+            log.warning(f"Could not click submit with selector {selector!r}: {type(e).__name__}")
+    page.wait_for_load_state("networkidle", timeout=10000)
+
+
+def _attempt_session_login(page, context, session_cookie, status_callback):
+    """Try cookies/session. Returns True if already logged in, False if login page still showing."""
+    cookie_json = os.getenv("BROWSER_COOKIES") or _load_cookies_from_db()
+
     page.goto(PORTAL_URL, timeout=30000)
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
-    except:
-        pass
+    except TimeoutError:
+        log.warning("networkidle timeout on initial portal load")
 
     if cookie_json:
-        try:
-            saved_cookies = json.loads(cookie_json)
-            context.add_cookies(saved_cookies)
-            cb(status_callback, f"Loaded {len(saved_cookies)} saved cookies. Reloading...")
-            page.reload(timeout=30000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except:
-                pass
-        except:
-            pass
-
+        _try_inject_saved_cookies(page, context, cookie_json, status_callback)
     if session_cookie:
-        cb(status_callback, "Injecting manual session cookie...")
-        for name in [".AspNet.ApplicationCookie", ".ASPXAUTH", "ASP.NET_SessionId", ".AspNetCore.Cookies"]:
-            context.add_cookies([{"name": name, "value": session_cookie, "domain": "www.planetaltig.com", "path": "/", "httpOnly": True, "secure": True}])
-        page.reload(timeout=30000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except:
-            pass
+        _try_inject_session_cookie(page, context, session_cookie, status_callback)
 
     cb(status_callback, f"Cookie check - current URL: {page.url}")
+    return "Login" not in page.url and "login" not in page.url
+
+
+def _attempt_password_login(page, context, status_callback):
+    """Fill and submit login form, check result. Returns True on success."""
+    username = os.getenv("PORTAL_USERNAME", "")
+    password = os.getenv("PORTAL_PASSWORD", "")
+    if not username or not password:
+        username, password = _load_credentials_from_db(username, password)
+    cb(status_callback, f"Using username: '{username}' | password set: {bool(password)}")
+    _fill_login_form(page, username, password, status_callback)
+    page.wait_for_timeout(3000)
+    cb(status_callback, f"After login - URL: {page.url}")
+
     if "Login" not in page.url and "login" not in page.url:
-        cb(status_callback, "Logged in via saved session.")
+        cb(status_callback, "Login successful.")
+        _save_cookies(context, status_callback)
         return True
 
-    if session_cookie:
-        cb(status_callback, "Manual session cookie expired. Get a fresh one from Settings.")
-        return False
+    page_error = ""
+    for sel in [".validation-summary-errors", ".text-danger", ".alert"]:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                page_error = el.inner_text().strip()
+                break
+        except Exception as e:
+            log.warning(f"Could not read login error element: {type(e).__name__}")
+    if "locked" in page_error.lower():
+        cb(status_callback, "FAILED: Account locked out. Wait 15 minutes.")
+    elif page_error:
+        cb(status_callback, f"FAILED: {page_error}")
+    else:
+        cb(status_callback, "FAILED: Wrong username or password.")
+    return False
 
-    # Clear expired cookies and fall back to password
+
+def _clear_expired_cookies(status_callback):
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -108,81 +206,25 @@ def login(page, context, session_cookie, status_callback):
         conn.commit()
         conn.close()
         os.environ.pop("BROWSER_COOKIES", None)
-    except:
-        pass
+    except Exception as e:
+        cb(status_callback, f"Could not clear expired cookies: {e}")
 
-    cb(status_callback, "Saved session expired. Logging in with username/password...")
-    username = os.getenv("PORTAL_USERNAME", "")
-    password = os.getenv("PORTAL_PASSWORD", "")
-    if not username or not password:
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-            if not username:
-                c.execute("SELECT value FROM settings WHERE key='portal_username'")
-                row = c.fetchone()
-                username = row[0] if row else username
-            if not password:
-                c.execute("SELECT value FROM settings WHERE key='portal_password'")
-                row = c.fetchone()
-                password = row[0] if row else ""
-            conn.close()
-        except:
-            pass
-    cb(status_callback, f"Using username: '{username}' | password set: {bool(password)}")
-    for selector in ["input[name='Alias']", "input[type='text']"]:
-        try:
-            page.fill(selector, username, timeout=3000)
-            break
-        except:
-            continue
 
-    for selector in ["input[name='Password']", "input[type='password']"]:
-        try:
-            page.fill(selector, password, timeout=3000)
-            break
-        except:
-            continue
+def login(page, context, session_cookie, status_callback):
+    if _attempt_session_login(page, context, session_cookie, status_callback):
+        cb(status_callback, "Logged in via saved session.")
+        return True
 
-    for selector in ["button[type='submit']", "input[type='submit']", "button:has-text('Login')"]:
-        try:
-            page.click(selector, timeout=3000)
-            break
-        except:
-            continue
-
-    try:
-        page.wait_for_load_state("networkidle", timeout=10000)
-    except:
-        pass
-    page.wait_for_timeout(3000)
-    cb(status_callback, f"After login - URL: {page.url}")
-
-    if "Login" in page.url or "login" in page.url:
-        page_error = ""
-        for sel in [".validation-summary-errors", ".text-danger", ".alert"]:
-            try:
-                el = page.query_selector(sel)
-                if el:
-                    page_error = el.inner_text().strip()
-                    break
-            except:
-                pass
-        if "locked" in page_error.lower():
-            cb(status_callback, "FAILED: Account locked out. Wait 15 minutes.")
-        elif page_error:
-            cb(status_callback, f"FAILED: {page_error}")
-        else:
-            cb(status_callback, "FAILED: Wrong username or password.")
+    if session_cookie:
+        cb(status_callback, "Manual session cookie expired. Get a fresh one from Settings.")
         return False
 
-    cb(status_callback, "Login successful.")
-    _save_cookies(context, status_callback)
-    return True
+    cb(status_callback, "Saved session expired. Logging in with username/password...")
+    _clear_expired_cookies(status_callback)
+    return _attempt_password_login(page, context, status_callback)
 
 
 def _save_cookies(context, status_callback=None):
-    import json
     try:
         cookies = context.cookies()
         cookie_json = json.dumps(cookies)
@@ -201,25 +243,145 @@ def _save_cookies(context, status_callback=None):
 
 
 def _push_cookies_to_render(cookie_json, status_callback=None):
-    import urllib.request
-    import urllib.error
-    import json as _json
     service_id = os.getenv("RENDER_SERVICE_ID")
     api_key = os.getenv("RENDER_API_KEY")
     if not service_id or not api_key:
         return
     try:
         url = f"https://api.render.com/v1/services/{service_id}/env-vars"
-        payload = _json.dumps([{"key": "BROWSER_COOKIES", "value": cookie_json}]).encode()
-        req = urllib.request.Request(url, data=payload, method="PUT")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        req.add_header("Content-Type", "application/json")
-        resp = urllib.request.urlopen(req, timeout=10)
-        cb(status_callback, f"Cookies pushed to Render env var (status {resp.status}).")
-    except urllib.error.HTTPError as e:
-        cb(status_callback, f"Render API error {e.code}: {e.read().decode()}")
-    except Exception as e:
+        resp = requests.put(
+            url,
+            json=[{"key": "BROWSER_COOKIES", "value": cookie_json}],
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        cb(status_callback, f"Cookies pushed to Render env var (status {resp.status_code}).")
+    except requests.HTTPError as e:
+        cb(status_callback, f"Render API error {e.response.status_code}: {e.response.text}")
+    except requests.RequestException as e:
         cb(status_callback, f"Could not push cookies to Render: {e}")
+
+
+def _load_sync_settings():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='session_cookie'")
+    row = c.fetchone()
+    session_cookie = row[0] if row else None
+    c.execute("SELECT value FROM settings WHERE key='last_sync_date'")
+    row = c.fetchone()
+    last_sync_date = row[0] if row else None
+    conn.close()
+    return session_cookie, last_sync_date
+
+
+def _navigate_to_inbox(page, status_callback):
+    """Navigate to Lead Inbox and wait for table. Returns row count or 0 on failure."""
+    cb(status_callback, f"Navigating to {LEAD_INBOX} ...")
+    page.goto(LEAD_INBOX, timeout=60000, wait_until="domcontentloaded")
+    cb(status_callback, "DOM ready. Waiting for table rows to render...")
+    try:
+        page.wait_for_selector("table tbody tr", timeout=30000)
+    except Exception:
+        log.warning("Timed out waiting for table rows selector")
+    page.wait_for_timeout(2000)
+    row_count = len(page.query_selector_all("table tbody tr"))
+    cb(status_callback, f"Table has {row_count} rows visible.")
+    return row_count
+
+
+def _scrape_rows(page, last_sync_date, status_callback):
+    """Scrape all table rows and return (leads_data, skipped, skipped_short, skipped_noname)."""
+    rows = page.query_selector_all("table tbody tr")
+    mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
+    cb(status_callback, f"Found {len(rows)} rows — {mode}")
+
+    leads_data = []
+    skipped = skipped_short = skipped_noname = 0
+    pending_lead = None
+
+    for row in rows:
+        if is_cancelled():
+            return None, skipped, skipped_short, skipped_noname
+        try:
+            cells = row.query_selector_all("td")
+            if len(cells) < 4:
+                if pending_lead and len(cells) >= 2:
+                    for cell in cells:
+                        txt = cell.inner_text().strip()
+                        low = txt.lower()
+                        if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["phone"]:
+                                pending_lead["phone"] = val
+                        elif low.startswith("email:") and "@" in txt:
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["email"]:
+                                pending_lead["email"] = val
+                skipped_short += 1
+                continue
+            name = cells[3].inner_text().strip()
+            if not name:
+                if pending_lead:
+                    for cell in cells:
+                        txt = cell.inner_text().strip()
+                        low = txt.lower()
+                        if low.startswith("email:") and "@" in txt:
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["email"]:
+                                pending_lead["email"] = val
+                        elif low.startswith("dob :") or low.startswith("dob:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["dob"]:
+                                pending_lead["dob"] = val
+                skipped_noname += 1
+                continue
+            assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
+            if last_sync_date and assign_date:
+                try:
+                    if datetime.strptime(assign_date, "%m/%d/%Y") <= datetime.strptime(last_sync_date, "%m/%d/%Y"):
+                        skipped += 1
+                        continue
+                except ValueError:
+                    pass
+            address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
+            lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
+            city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
+            state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
+            lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
+            if not lead_type and len(cells) <= 11 and len(leads_data) < 3:
+                cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
+            link = row.query_selector("a")
+            detail_url = link.get_attribute("href") if link else None
+            email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
+            lead = {
+                "name": name, "address": address, "lead_tags": clean_tags,
+                "assign_date": assign_date, "city": city, "state": state,
+                "lead_type": lead_type, "detail_url": detail_url,
+                "email": email, "phone": phone, "dob": dob
+            }
+            leads_data.append(lead)
+            pending_lead = lead
+        except Exception as e:
+            log.warning(f"Row parse error: {e}")
+            continue
+
+    return leads_data, skipped, skipped_short, skipped_noname
+
+
+def _save_sync_date(leads_data):
+    dates = [l["assign_date"] for l in leads_data if l.get("assign_date")]
+    try:
+        newest = max(dates, key=lambda d: datetime.strptime(d, "%m/%d/%Y")) if dates else datetime.now().strftime("%m/%d/%Y")
+    except ValueError:
+        newest = datetime.now().strftime("%m/%d/%Y")
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync_date', ?)", (newest,))
+    conn.commit()
+    conn.close()
+    return newest
 
 
 def run_scraper(status_callback=None):
@@ -230,16 +392,7 @@ def run_scraper(status_callback=None):
         return 0
 
     init_db()
-
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='session_cookie'")
-    row = c.fetchone()
-    session_cookie = row[0] if row else None
-    c.execute("SELECT value FROM settings WHERE key='last_sync_date'")
-    row = c.fetchone()
-    last_sync_date = row[0] if row else None
-    conn.close()
+    session_cookie, last_sync_date = _load_sync_settings()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
@@ -249,124 +402,29 @@ def run_scraper(status_callback=None):
         page = context.new_page()
 
         try:
-            # ── 1. Login ──────────────────────────────────────────────
             cb(status_callback, "Connecting to portal...")
             if not login(page, context, session_cookie, status_callback):
                 browser.close()
                 return 0
             cb(status_callback, "Logged in ✓")
 
-            # ── 2. Navigate ───────────────────────────────────────────
             cb(status_callback, "Loading Lead Inbox...")
-            cb(status_callback, f"Navigating to {LEAD_INBOX} ...")
-            page.goto(LEAD_INBOX, timeout=60000, wait_until="domcontentloaded")
-            cb(status_callback, "DOM ready. Waiting for table rows to render...")
-            try:
-                page.wait_for_selector("table tbody tr", timeout=30000)
-            except:
-                pass
-            page.wait_for_timeout(2000)
-            row_count = len(page.query_selector_all("table tbody tr"))
-            cb(status_callback, f"Table has {row_count} rows visible.")
+            row_count = _navigate_to_inbox(page, status_callback)
             if row_count < 50:
-                snippet = page.content()[:2000]
-                cb(status_callback, f"HTML snippet: {snippet}")
+                cb(status_callback, f"HTML snippet: {page.content()[:2000]}")
                 browser.close()
                 return 0
             cb(status_callback, "Table ready. Scraping rows...")
 
-            # ── 3. Scrape ─────────────────────────────────────────────
-            rows = page.query_selector_all("table tbody tr")
-            cb(status_callback, f"query_selector_all returned {len(rows)} rows")
-            mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
-            cb(status_callback, f"Found {len(rows)} leads — {mode}")
-
-            leads_data = []
-            skipped = 0
-            skipped_short = 0
-            skipped_noname = 0
-            pending_lead = None
-            for row in rows:
-                if is_cancelled():
-                    cb(status_callback, "Sync cancelled.")
-                    browser.close()
-                    return 0
-                try:
-                    cells = row.query_selector_all("td")
-                    if len(cells) < 4:
-                        # Detail sub-row — attach data to previous lead
-                        if pending_lead and len(cells) >= 2:
-                            for cell in cells:
-                                txt = cell.inner_text().strip()
-                                low = txt.lower()
-                                if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
-                                    val = txt.split(":", 1)[1].strip()
-                                    if val and not pending_lead["phone"]:
-                                        pending_lead["phone"] = val
-                                elif low.startswith("email:") and "@" in txt:
-                                    val = txt.split(":", 1)[1].strip()
-                                    if val and not pending_lead["email"]:
-                                        pending_lead["email"] = val
-                        skipped_short += 1
-                        continue
-                    name = cells[3].inner_text().strip()
-                    if not name:
-                        # 4-cell sub-row (Group/DOB/Email) — attach to previous lead
-                        if pending_lead:
-                            for cell in cells:
-                                txt = cell.inner_text().strip()
-                                low = txt.lower()
-                                if low.startswith("email:") and "@" in txt:
-                                    val = txt.split(":", 1)[1].strip()
-                                    if val and not pending_lead["email"]:
-                                        pending_lead["email"] = val
-                                elif low.startswith("dob :") or low.startswith("dob:"):
-                                    val = txt.split(":", 1)[1].strip()
-                                    if val and not pending_lead["dob"]:
-                                        pending_lead["dob"] = val
-                        skipped_noname += 1
-                        continue
-                    assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
-
-                    # Skip leads older than last sync (incremental)
-                    if last_sync_date and assign_date:
-                        try:
-                            from datetime import datetime as dt
-                            lead_dt = dt.strptime(assign_date, "%m/%d/%Y")
-                            last_dt = dt.strptime(last_sync_date, "%m/%d/%Y")
-                            if lead_dt <= last_dt:
-                                skipped += 1
-                                continue
-                        except:
-                            pass
-
-                    address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
-                    lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
-                    city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
-                    state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
-                    lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
-                    if not lead_type and len(cells) <= 11:
-                        if len(leads_data) < 3:
-                            cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
-                    link      = row.query_selector("a")
-                    detail_url = link.get_attribute("href") if link else None
-                    email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
-                    lead = {
-                        "name": name, "address": address, "lead_tags": clean_tags,
-                        "assign_date": assign_date, "city": city, "state": state,
-                        "lead_type": lead_type, "detail_url": detail_url,
-                        "email": email, "phone": phone, "dob": dob
-                    }
-                    leads_data.append(lead)
-                    pending_lead = lead
-                except:
-                    continue
+            leads_data, skipped, skipped_short, skipped_noname = _scrape_rows(page, last_sync_date, status_callback)
+            if leads_data is None:
+                cb(status_callback, "Sync cancelled.")
+                browser.close()
+                return 0
 
             cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving to DB...")
-            empty_type = sum(1 for l in leads_data if not l.get("lead_type"))
-            cb(status_callback, f"Leads with empty lead_type: {empty_type}")
+            cb(status_callback, f"Leads with empty lead_type: {sum(1 for l in leads_data if not l.get('lead_type'))}")
 
-            # ── 4. Save (bulk) ────────────────────────────────────
             new_leads = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
             with_phone = sum(1 for l in leads_data if l.get("phone"))
@@ -374,7 +432,6 @@ def run_scraper(status_callback=None):
             cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
             cb(status_callback, f"Lead types found: {type_samples}")
 
-            # ── 5. Enrich all new leads from detail pages ─────────────
             needs_enrich = [l for l in leads_data if l.get("detail_url")]
             cb(status_callback, f"Starting enrichment for {len(needs_enrich)} leads...")
             if needs_enrich:
@@ -383,27 +440,14 @@ def run_scraper(status_callback=None):
 
             browser.close()
 
-            # ── 6. Save last sync date (newest assign_date seen) ──────
-            dates = [l["assign_date"] for l in leads_data if l.get("assign_date")]
-            if dates:
-                try:
-                    newest = max(dates, key=lambda d: datetime.strptime(d, "%m/%d/%Y"))
-                except:
-                    newest = datetime.now().strftime("%m/%d/%Y")
-            else:
-                newest = datetime.now().strftime("%m/%d/%Y")
-            conn2 = get_connection()
-            c2 = conn2.cursor()
-            c2.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync_date', ?)", (newest,))
-            conn2.commit()
-            conn2.close()
+            newest = _save_sync_date(leads_data)
             cb(status_callback, f"Last sync date saved as {newest}.")
-
             return new_leads
 
         except Exception as e:
+            log.exception(f"SCRAPER ERROR: {e}")
             browser.close()
-            cb(status_callback, f"SCRAPER ERROR: {str(e)}")
+            cb(status_callback, f"SCRAPER ERROR: {e}")
             return 0
 
 
@@ -439,10 +483,10 @@ def _scrape_detail(page, url):
             city = line.split(":", 1)[1].strip()
         elif not state and low.startswith("state:"):
             state = line.split(":", 1)[1].strip()
-    return phone, email, dob, address, city, state
+    return LeadDetail(phone=phone, email=email, dob=dob, address=address, city=city, state=state)
 
 
-def _save_enriched(lead, phone, email, dob, address, city, state):
+def _save_enriched(lead, detail: LeadDetail):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
@@ -455,30 +499,28 @@ def _save_enriched(lead, phone, email, dob, address, city, state):
             state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
             enriched = 1
         WHERE full_name=?
-    """, (phone, email, dob, address, city, state, lead["name"]))
+    """, (detail.phone, detail.email, detail.dob, detail.address, detail.city, detail.state, lead["name"]))
     conn.commit()
     conn.close()
 
 
 def enrich_leads(leads, context, status_callback=None, workers=5):
     """Enrich leads in parallel using multiple browser pages."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     total = len(leads)
     enriched = 0
 
     pages = [context.new_page() for _ in range(workers)]
-    page_pool = list(range(workers))
-    import threading
     lock = threading.Lock()
 
     def enrich_one(idx, lead):
         slot = idx % workers
         p = pages[slot]
         try:
-            phone, email, dob, address, city, state = _scrape_detail(p, lead["detail_url"])
-            _save_enriched(lead, phone, email, dob, address, city, state)
+            detail = _scrape_detail(p, lead["detail_url"])
+            _save_enriched(lead, detail)
             return True
-        except:
+        except Exception as e:
+            log.warning(f"Enrichment failed for {lead.get('name')}: {e}")
             return False
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -494,62 +536,66 @@ def enrich_leads(leads, context, status_callback=None, workers=5):
     for p in pages:
         try:
             p.close()
-        except:
-            pass
+        except Exception as e:
+            log.warning(f"Could not close enrichment page: {e}")
 
     cb(status_callback, f"Enrichment done — {enriched}/{total} leads updated with full data.")
+
+
+def _build_existing_sets(c):
+    c.execute("SELECT email, full_name, address FROM leads")
+    existing = c.fetchall()
+    existing_emails = {row[0] for row in existing if row[0]}
+    existing_no_email = {(row[1], row[2] or "") for row in existing if not row[0]}
+    return existing_emails, existing_no_email
+
+
+def _insert_lead(c, lead, now, existing_emails, existing_no_email):
+    name = lead.get("name", "Unknown").strip() or "Unknown"
+    if any(name.lower().startswith(p) for p in ["phone no:", "phone:", "group:", "name:", "email:", "dob:", "cell:", "mobile:"]):
+        return False, True  # (inserted, rejected)
+    email         = lead.get("email", "").strip() or None
+    phone         = lead.get("phone", "").strip() or None
+    policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
+    detail_url    = lead.get("detail_url") or None
+    address       = lead.get("address", "").strip() or None
+    city          = lead.get("city", "").strip() or None
+    state         = lead.get("state", "").strip() or None
+    dob           = lead.get("dob", "").strip() or None
+    if email:
+        if email in existing_emails:
+            return False, False
+        existing_emails.add(email)
+    else:
+        key = (name, address or "")
+        if key in existing_no_email:
+            return False, False
+        existing_no_email.add(key)
+    c.execute("""
+        INSERT OR IGNORE INTO leads
+            (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, email, phone, policy_status, "planetaltig.com", now, detail_url, address, city, state, dob))
+    return True, False
 
 
 def save_leads_bulk(leads, status_callback=None):
     if not leads:
         return 0
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection()
     c = conn.cursor()
-
-    c.execute("SELECT email, full_name, address FROM leads")
-    existing = c.fetchall()
-    existing_emails = {row[0] for row in existing if row[0]}
-    existing_no_email = {(row[1], row[2] or "") for row in existing if not row[0]}
-
+    existing_emails, existing_no_email = _build_existing_sets(c)
     new_count = 0
     rejected = 0
     for lead in leads:
-        name          = lead.get("name", "Unknown").strip() or "Unknown"
-        # Reject sub-rows that slipped through
-        if any(name.lower().startswith(p) for p in ["phone no:", "phone:", "group:", "name:", "email:", "dob:", "cell:", "mobile:"]):
+        inserted, is_rejected = _insert_lead(c, lead, now, existing_emails, existing_no_email)
+        if is_rejected:
             if rejected < 3:
-                status_callback and status_callback(f"Rejected name: {name!r}")
+                status_callback and status_callback(f"Rejected name: {lead.get('name')!r}")
             rejected += 1
-            continue
-        name          = lead.get("name", "Unknown").strip() or "Unknown"
-        email         = lead.get("email", "").strip() or None
-        phone         = lead.get("phone", "").strip() or None
-        policy_status = lead.get("lead_type", lead.get("lead_tags", "Unknown")).strip() or "Unknown"
-        detail_url    = lead.get("detail_url") or None
-        address       = lead.get("address", "").strip() or None
-        city          = lead.get("city", "").strip() or None
-        state         = lead.get("state", "").strip() or None
-        dob           = lead.get("dob", "").strip() or None
-
-        if email:
-            if email in existing_emails:
-                continue
-            existing_emails.add(email)
-        else:
-            key = (name, address or "")
-            if key in existing_no_email:
-                continue
-            existing_no_email.add(key)
-
-        c.execute("""
-            INSERT OR IGNORE INTO leads
-                (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, email, phone, policy_status, "planetaltig.com", now, detail_url, address, city, state, dob))
-        new_count += 1
-
+        elif inserted:
+            new_count += 1
     conn.commit()
     conn.close()
     if status_callback:
@@ -570,7 +616,7 @@ def save_lead(lead):
             c.execute("""
                 INSERT OR IGNORE INTO leads (full_name, email, phone, policy_status, source, date_scraped)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (name, email, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            """, (name, email, phone, policy_status, "planetaltig.com", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
         else:
             c.execute("SELECT id FROM leads WHERE full_name=? AND email IS NULL AND policy_status=?", (name, policy_status))
             if c.fetchone():
@@ -578,12 +624,13 @@ def save_lead(lead):
             c.execute("""
                 INSERT INTO leads (full_name, email, phone, policy_status, source, date_scraped)
                 VALUES (?, NULL, ?, ?, ?, ?)
-            """, (name, phone, policy_status, "planetaltig.com", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            """, (name, phone, policy_status, "planetaltig.com", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
 
         inserted = c.rowcount > 0
         conn.commit()
         return inserted
     except Exception as e:
+        log.warning(f"save_lead error for {lead.get('name')!r}: {e}")
         return False
     finally:
         conn.close()

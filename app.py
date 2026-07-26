@@ -3,7 +3,7 @@ from flask_cors import CORS
 import threading
 import os
 import jwt
-import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 from dotenv import load_dotenv
 from database import init_db, get_connection
@@ -54,7 +54,7 @@ task_status = {"message": "Ready.", "running": False, "logs": [], "cancel": Fals
 
 # ── Auth ──────────────────────────────────────────────
 def make_token():
-    payload = {"user": "dona", "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
+    payload = {"user": "dona", "exp": datetime.now(timezone.utc) + timedelta(days=7)}
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 
@@ -172,13 +172,12 @@ def dashboard():
 def leads():
     try:
         cat = request.args.get("category", "ALL")
-        log.info(f"[leads] fetching category={cat}")
         data = get_leads_by_category(None if cat == "ALL" else cat)
         log.info(f"[leads] returned {len(data)} leads")
         return jsonify(data)
     except Exception as e:
-        log.error(f"[leads] ERROR: {e}")
-        return jsonify({"error": str(e)}), 500
+        log.error(f"[leads] ERROR: {type(e).__name__}")
+        return jsonify({"error": "Failed to fetch leads"}), 500
 
 
 @app.route("/api/send", methods=["POST"])
@@ -266,7 +265,8 @@ def debug():
             "gmail_set": bool(os.getenv("GMAIL_APP_PASSWORD")),
             "portal_password_set": bool(os.getenv("PORTAL_PASSWORD")),
         }
-        log.info(f"[debug] {info}")
+        safe_info = {k: v for k, v in info.items() if k not in ("turso_url_set", "turso_token_set", "gmail_set", "portal_password_set")}
+        log.info(f"[debug] {safe_info}")
         return jsonify(info)
     except Exception as e:
         log.error(f"[debug] ERROR: {e}")
@@ -367,7 +367,7 @@ def settings():
     c = conn.cursor()
     if request.method == "POST":
         data = request.get_json()
-        for key in ["portal_username", "portal_password", "gmail_app_password", "session_cookie"]:
+        for key in ["portal_username", "portal_password", "gmail_address", "gmail_app_password", "session_cookie"]:
             if data.get(key):
                 c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, data[key]))
                 os.environ[key.upper()] = data[key]
@@ -380,16 +380,15 @@ def settings():
     conn.close()
     if saved.get("portal_password"):
         os.environ["PORTAL_PASSWORD"] = saved["portal_password"]
+    if saved.get("gmail_address"):
+        os.environ["GMAIL_ADDRESS"] = saved["gmail_address"]
     if saved.get("gmail_app_password"):
         os.environ["GMAIL_APP_PASSWORD"] = saved["gmail_app_password"]
     return jsonify({
         "PORTAL_USERNAME": saved.get("portal_username") or os.getenv("PORTAL_USERNAME", ""),
-        "GMAIL_ADDRESS": os.getenv("GMAIL_ADDRESS", ""),
+        "GMAIL_ADDRESS": saved.get("gmail_address") or os.getenv("GMAIL_ADDRESS", ""),
         "has_portal_password": bool(saved.get("portal_password")),
         "has_gmail_password": bool(saved.get("gmail_app_password")),
         "has_session_cookie": bool(saved.get("session_cookie")),
     })
 
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
