@@ -532,6 +532,10 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
             return None, skipped, skipped_short, skipped_noname, False
         try:
             cells = row.query_selector_all("td")
+            # extract full inner text of the row for sub-row detection
+            row_txt = " ".join(c.inner_text().strip() for c in cells).strip()
+            row_low = row_txt.lower()
+
             if len(cells) < 4:
                 if pending_lead and len(cells) >= 2:
                     for cell in cells:
@@ -545,6 +549,37 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
                             val = txt.split(":", 1)[1].strip()
                             if val and not pending_lead["email"]:
                                 pending_lead["email"] = val
+                        elif low.startswith("dob:") or low.startswith("dob :"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["dob"]:
+                                pending_lead["dob"] = val
+                skipped_short += 1
+                continue
+
+            # detect info rows that have 4+ cells but contain contact data, not a lead name
+            # e.g. cells[3] = "Phone no: (720) 989-8532" or "Group: REFERRAL"
+            info_prefixes = ["phone no:", "phone:", "cell:", "mobile:", "email:", "group:", "dob:", "dob :", "name:"]
+            if any(row_low.startswith(p) or (cells[3].inner_text().strip().lower().startswith(p)) for p in info_prefixes):
+                if pending_lead:
+                    for cell in cells:
+                        txt = cell.inner_text().strip()
+                        low = txt.lower()
+                        if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
+                            val = txt.split(":", 1)[1].strip()
+                            digits = ''.join(c for c in val if c.isdigit())
+                            if val and len(digits) >= 7 and not pending_lead["phone"]:
+                                pending_lead["phone"] = val
+                        elif low.startswith("email:") and "@" in txt:
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["email"]:
+                                pending_lead["email"] = val
+                        elif low.startswith("dob:") or low.startswith("dob :"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["dob"]:
+                                pending_lead["dob"] = val
+                # log first 3 info rows so we can see what data is in them
+                if skipped_short < 3:
+                    cb(status_callback, f"Info row cells: {[c.inner_text().strip()[:40] for c in cells]}")
                 skipped_short += 1
                 continue
             name = cells[3].inner_text().strip()
