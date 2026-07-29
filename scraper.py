@@ -579,27 +579,30 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
             lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
             link = row.query_selector("a")
             detail_url = None
-            if link:
-                href = (link.get_attribute("href") or "").strip()
-                onclick = (link.get_attribute("onclick") or "").strip()
-                # try data attributes first
-                for attr in ["data-url", "data-href", "data-link", "data-detail"]:
-                    val = link.get_attribute(attr)
-                    if val and val.strip() and not val.strip().startswith("javascript"):
-                        detail_url = val.strip()
+            # check the <tr> row onclick first — most portals put navigation there
+            row_onclick = (row.get_attribute("onclick") or "").strip()
+            # also check the name cell (cells[3]) for onclick or data attrs
+            name_cell_onclick = (cells[3].get_attribute("onclick") or "").strip() if len(cells) > 3 else ""
+            name_cell_link = cells[3].query_selector("a") if len(cells) > 3 else None
+            name_href = (name_cell_link.get_attribute("href") or "").strip() if name_cell_link else ""
+            name_onclick = (name_cell_link.get_attribute("onclick") or "").strip() if name_cell_link else ""
+
+            import re as _re
+            for src in [name_href, name_onclick, name_cell_onclick, row_onclick]:
+                if not src or src == "#":
+                    continue
+                if src.startswith("/") or src.startswith("http"):
+                    if not src.startswith("javascript"):
+                        detail_url = src
                         break
-                # real href
-                if not detail_url and href and not href.startswith("javascript") and href != "#":
-                    detail_url = href
-                # extract URL from onclick e.g. onclick="location.href='/Lead/Detail/123'"
-                if not detail_url and onclick:
-                    import re as _re
-                    m = _re.search(r"['\"]([/][^'\"]+)['\"]", onclick)
-                    if m:
-                        detail_url = m.group(1)
-                # log first 3 rows so we can see what the portal actually provides
-                if len(leads_data) < 3:
-                    cb(status_callback, f"Row link debug — href={href!r} onclick={onclick!r} → detail_url={detail_url!r}")
+                m = _re.search(r"['\"]([/][^'\"]+)['\"]", src)
+                if m:
+                    detail_url = m.group(1)
+                    break
+
+            # log first 3 rows so we can see what the portal actually provides
+            if len(leads_data) < 3:
+                cb(status_callback, f"Row debug — tr_onclick={row_onclick!r} | name_href={name_href!r} | name_onclick={name_onclick!r} → detail_url={detail_url!r}")
             email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
             lead = {
                 "name": name, "address": address, "lead_tags": clean_tags,
