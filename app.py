@@ -274,7 +274,7 @@ def manual_settings():
 def sync_reset():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("DELETE FROM settings WHERE key='last_sync_date'")
+    c.execute("DELETE FROM settings WHERE key IN ('last_sync_date', 'sync_current_page', 'manual_sync_page')")
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "message": "Sync reset. Next sync will pull all leads from scratch."})
@@ -286,9 +286,15 @@ def sync():
     if task_status["running"]:
         log.warning("[sync] already running, ignoring duplicate request")
         return jsonify({"ok": False, "message": "Sync already running"})
-    log.info("[sync] starting")
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='sync_current_page'")
+    row = c.fetchone()
+    conn.close()
+    current_page = int(row[0]) if row else 1
+    log.info(f"[sync] starting page {current_page}")
     run_task(scraper_task)
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "page": current_page})
 
 
 @app.route("/api/debug/schema")

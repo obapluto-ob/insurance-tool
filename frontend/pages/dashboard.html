@@ -139,8 +139,14 @@
             clearTimeout(logInterval);
             logInterval = null;
             appendLog("--- Sync finished. Close this panel when ready. ---");
+            // update button to show next page
             const btn = document.getElementById("sync-btn");
-            if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
+            if (btn) {
+              apiFetch("/api/sync").then(r => r.json()).then(nd => {
+                btn.textContent = nd.page > 1 ? `Sync Page ${nd.page}` : "Sync Portal";
+                btn.disabled = false;
+              }).catch(() => { btn.textContent = "Sync Portal"; btn.disabled = false; });
+            }
             const manualBtn = document.getElementById("manual-sync-btn");
             if (manualBtn) { manualBtn.textContent = "Manual Sync"; manualBtn.disabled = false; }
             const cancelBtn = document.getElementById("cancel-btn");
@@ -185,11 +191,14 @@
   }
 
   async function syncPortal(btn) {
-    btn.textContent = "Syncing...";
+    const res = await apiFetch("/api/sync");
+    const d = await res.json();
+    if (!d.ok) { alert(d.message || "Sync already running."); return; }
+    const page = d.page || 1;
+    btn.textContent = `Syncing page ${page}...`;
     btn.disabled = true;
-    openLog("Sync Log — Live Output");
+    openLog(`Sync Log — Page ${page}`);
     appendLog("Connecting to portal...");
-    await apiFetch("/api/sync");
     startLogPolling();
   }
 

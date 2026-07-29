@@ -405,198 +405,196 @@ def _navigate_to_inbox(page, status_callback, portal_url=None, inbox_url_key="in
     return row_count
 
 
-def _scrape_rows(page, last_sync_date, status_callback):
-    """Scrape all table rows across all pages. Returns (leads_data, skipped, skipped_short, skipped_noname)."""
-    all_leads = []
-    skipped = skipped_short = skipped_noname = 0
-    page_num = 1
-    stop_early = False
+def _get_sync_page(is_manual=False):
+    key = "manual_sync_page" if is_manual else "sync_current_page"
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key=?", (key,))
+    row = c.fetchone()
+    conn.close()
+    return int(row[0]) if row else 1
 
-    while not stop_early:
-        rows = page.query_selector_all("table tbody tr")
-        mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
-        cb(status_callback, f"Page {page_num}: Found {len(rows)} rows — {mode}")
 
-        leads_data = []
-        pending_lead = None
+def _save_sync_page(page_num, is_manual=False):
+    key = "manual_sync_page" if is_manual else "sync_current_page"
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(page_num)))
+    conn.commit()
+    conn.close()
 
-        for row in rows:
-            if is_cancelled():
-                return None, skipped, skipped_short, skipped_noname
-            try:
-                cells = row.query_selector_all("td")
-                if len(cells) < 4:
-                    if pending_lead and len(cells) >= 2:
-                        for cell in cells:
-                            txt = cell.inner_text().strip()
-                            low = txt.lower()
-                            if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
-                                val = txt.split(":", 1)[1].strip()
-                                if val and not pending_lead["phone"]:
-                                    pending_lead["phone"] = val
-                            elif low.startswith("email:") and "@" in txt:
-                                val = txt.split(":", 1)[1].strip()
-                                if val and not pending_lead["email"]:
-                                    pending_lead["email"] = val
-                    skipped_short += 1
-                    continue
-                name = cells[3].inner_text().strip()
-                if not name:
-                    if pending_lead:
-                        for cell in cells:
-                            txt = cell.inner_text().strip()
-                            low = txt.lower()
-                            if low.startswith("email:") and "@" in txt:
-                                val = txt.split(":", 1)[1].strip()
-                                if val and not pending_lead["email"]:
-                                    pending_lead["email"] = val
-                            elif low.startswith("dob :") or low.startswith("dob:"):
-                                val = txt.split(":", 1)[1].strip()
-                                if val and not pending_lead["dob"]:
-                                    pending_lead["dob"] = val
-                    skipped_noname += 1
-                    continue
-                assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
-                if last_sync_date and assign_date:
-                    try:
-                        if datetime.strptime(assign_date, "%m/%d/%Y") <= datetime.strptime(last_sync_date, "%m/%d/%Y"):
-                            skipped += 1
-                            stop_early = True  # rows are date-sorted, stop paging
-                            continue
-                    except ValueError:
-                        pass
-                address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
-                lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
-                city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
-                state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
-                lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
-                if not lead_type and len(cells) <= 11 and len(all_leads) < 3:
-                    cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
-                link = row.query_selector("a")
-                detail_url = link.get_attribute("href") if link else None
-                email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
-                lead = {
-                    "name": name, "address": address, "lead_tags": clean_tags,
-                    "assign_date": assign_date, "city": city, "state": state,
-                    "lead_type": lead_type, "detail_url": detail_url,
-                    "email": email, "phone": phone, "dob": dob
-                }
-                leads_data.append(lead)
-                pending_lead = lead
-            except Exception as e:
-                log.warning(f"Row parse error: {e}")
-                continue
 
-        all_leads.extend(leads_data)
+def _clear_sync_page(is_manual=False):
+    key = "manual_sync_page" if is_manual else "sync_current_page"
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM settings WHERE key=?", (key,))
+    conn.commit()
+    conn.close()
 
-        if stop_early:
-            break
 
-        # discover pagination — read all links/buttons and find one that looks like "next"
-        next_btn = None
+def _find_next_btn(page):
+    """Find the Next pagination button using 4 strategies. Returns element or None."""
+    # 1. known CSS/aria selectors
+    for sel in [
+        "a[aria-label='Next']", "a[aria-label='next']", "a[aria-label='Next Page']",
+        "a:has-text('Next')", "button:has-text('Next')",
+        "li.next:not(.disabled) a", "li.PagedList-skipToNext a",
+        "a.next", "button.next", ".next-page a",
+        "[data-page='next']", "[data-action='next']",
+        ".pagination li:last-child:not(.disabled) a",
+        "a[rel='next']", "input[value='Next']", "input[value='next']",
+    ]:
         try:
-            # log pagination area HTML on first page so we can see what's there
-            if page_num == 1:
-                pager = page.query_selector(".pagination, .pager, [class*='page'], nav, [class*='paging'], [id*='page'], [id*='pager']")
-                if pager:
-                    cb(status_callback, f"Pagination HTML: {pager.inner_html()[:600]}")
-                else:
-                    cb(status_callback, "No pagination container found on page.")
-
-            # 1. known CSS/aria selectors
-            for sel in [
-                "a[aria-label='Next']", "a[aria-label='next']", "a[aria-label='Next Page']",
-                "a:has-text('Next')", "button:has-text('Next')",
-                "li.next:not(.disabled) a", "li.PagedList-skipToNext a",
-                "a.next", "button.next", ".next-page a", ".next-page button",
-                "[data-page='next']", "[data-action='next']",
-                ".pagination li:last-child:not(.disabled) a",
-                "a[rel='next']", "link[rel='next']",
-                "input[value='Next']", "input[value='next']",
-                "[class*='next']:not([class*='context']):not([class*='content']) a",
-                "[class*='next']:not([class*='context']):not([class*='content']) button",
-            ]:
+            btn = page.query_selector(sel)
+            if btn and btn.is_visible() and btn.is_enabled():
+                return btn
+        except Exception:
+            continue
+    # 2. URL param
+    import re as _re
+    for param in ["page", "PageNumber", "pageNumber", "pg", "p"]:
+        m = _re.search(rf"[?&]{param}=(\d+)", page.url)
+        if m:
+            next_val = int(m.group(1)) + 1
+            for el in page.query_selector_all(f"a[href*='{param}={next_val}']"):
                 try:
-                    btn = page.query_selector(sel)
-                    if btn and btn.is_visible() and btn.is_enabled():
-                        next_btn = btn
-                        cb(status_callback, f"Pagination selector matched: {sel!r}")
-                        break
+                    if el.is_visible():
+                        return el
                 except Exception:
                     continue
-
-            # 2. URL-based: look for a link whose href has page= or PageNumber= incremented
-            if not next_btn:
-                current_url = page.url
-                import re as _re
-                for param in ["page", "PageNumber", "pageNumber", "pg", "p", "offset"]:
-                    m = _re.search(rf"[?&]{param}=(\d+)", current_url)
-                    if m:
-                        next_val = int(m.group(1)) + 1
-                        next_url_pattern = _re.sub(rf"({param}=)\d+", rf"\g<1>{next_val}", current_url)
-                        for el in page.query_selector_all(f"a[href*='{param}={next_val}']"):
-                            try:
-                                if el.is_visible():
-                                    next_btn = el
-                                    cb(status_callback, f"Pagination found via URL param '{param}={next_val}'")
-                                    break
-                            except Exception:
-                                continue
-                        if next_btn:
-                            break
-
-            # 3. text/symbol scan across all clickable elements
-            if not next_btn:
-                next_keywords = ["next", "next page", "›", "»", ">>", "forward", "siguiente", "weiter", "suivant"]
-                for el in page.query_selector_all("a, button, input[type='button'], input[type='submit'], [role='button']"):
+    # 3. text/symbol scan
+    for el in page.query_selector_all("a, button, input[type='button'], [role='button']"):
+        try:
+            combined = " ".join([
+                (el.inner_text() or "").lower(),
+                (el.get_attribute("href") or "").lower(),
+                (el.get_attribute("aria-label") or "").lower(),
+                (el.get_attribute("title") or "").lower(),
+                (el.get_attribute("value") or "").lower(),
+            ])
+            if any(kw in combined for kw in ["next", "›", "»", ">>", "forward"]) and el.is_visible() and el.is_enabled():
+                return el
+        except Exception:
+            continue
+    # 4. active page number + 1
+    try:
+        active = page.query_selector(".pagination .active a, .pagination .active, [class*='current-page']")
+        if active:
+            cur = int((active.inner_text() or "0").strip())
+            if cur > 0:
+                for el in page.query_selector_all(".pagination a, [class*='page'] a"):
                     try:
-                        txt = (el.inner_text() or "").strip().lower()
-                        href = (el.get_attribute("href") or "").lower()
-                        aria = (el.get_attribute("aria-label") or "").lower()
-                        title = (el.get_attribute("title") or "").lower()
-                        val = (el.get_attribute("value") or "").lower()
-                        combined = " ".join([txt, href, aria, title, val])
-                        if any(kw in combined for kw in next_keywords):
-                            if el.is_visible() and el.is_enabled():
-                                next_btn = el
-                                cb(status_callback, f"Pagination found via text scan: '{el.inner_text().strip() or aria or title}'")
-                                break
+                        if (el.inner_text() or "").strip() == str(cur + 1) and el.is_visible():
+                            return el
                     except Exception:
                         continue
+    except Exception:
+        pass
+    return None
 
-            # 4. numeric page links — look for current page number + 1 as a link
-            if not next_btn:
-                try:
-                    active = page.query_selector(".pagination .active a, .pagination .active, [class*='current-page'], [class*='activePage']")
-                    if active:
-                        cur = int((active.inner_text() or "0").strip())
-                        if cur > 0:
-                            for el in page.query_selector_all(".pagination a, [class*='page'] a"):
-                                try:
-                                    if (el.inner_text() or "").strip() == str(cur + 1) and el.is_visible():
-                                        next_btn = el
-                                        cb(status_callback, f"Pagination found via active page number: page {cur} → {cur+1}")
-                                        break
-                                except Exception:
-                                    continue
-                except Exception:
-                    pass
 
-        except Exception as e:
-            log.warning(f"Pagination discovery error: {e}")
+def _navigate_to_page(page, target_page, status_callback):
+    """Click Next until we reach target_page. Returns True if reached, False if last page hit before target."""
+    for current in range(1, target_page):
+        next_btn = _find_next_btn(page)
         if not next_btn:
-            break  # no more pages
-        cb(status_callback, f"Moving to page {page_num + 1}...")
+            cb(status_callback, f"Portal only has {current} page(s) — already at last page.")
+            return False
         try:
             next_btn.click()
             page.wait_for_selector("table tbody tr", timeout=15000)
             page.wait_for_timeout(1000)
-            page_num += 1
         except Exception as e:
-            log.warning(f"Pagination click failed: {e}")
-            break
+            log.warning(f"Pagination click failed navigating to page {current+1}: {e}")
+            return False
+    return True
 
-    return all_leads, skipped, skipped_short, skipped_noname
+
+def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
+    """Scrape target_page only. Returns (leads_data, skipped, skipped_short, skipped_noname, is_last_page)."""
+    if target_page > 1:
+        cb(status_callback, f"Navigating to page {target_page}...")
+        if not _navigate_to_page(page, target_page, status_callback):
+            return [], 0, 0, 0, True  # already at last page
+
+    rows = page.query_selector_all("table tbody tr")
+    mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
+    cb(status_callback, f"Page {target_page}: Found {len(rows)} rows — {mode}")
+
+    leads_data = []
+    skipped = skipped_short = skipped_noname = 0
+    pending_lead = None
+    stop_early = False
+
+    for row in rows:
+        if is_cancelled():
+            return None, skipped, skipped_short, skipped_noname, False
+        try:
+            cells = row.query_selector_all("td")
+            if len(cells) < 4:
+                if pending_lead and len(cells) >= 2:
+                    for cell in cells:
+                        txt = cell.inner_text().strip()
+                        low = txt.lower()
+                        if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["phone"]:
+                                pending_lead["phone"] = val
+                        elif low.startswith("email:") and "@" in txt:
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["email"]:
+                                pending_lead["email"] = val
+                skipped_short += 1
+                continue
+            name = cells[3].inner_text().strip()
+            if not name:
+                if pending_lead:
+                    for cell in cells:
+                        txt = cell.inner_text().strip()
+                        low = txt.lower()
+                        if low.startswith("email:") and "@" in txt:
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["email"]:
+                                pending_lead["email"] = val
+                        elif low.startswith("dob :") or low.startswith("dob:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead["dob"]:
+                                pending_lead["dob"] = val
+                skipped_noname += 1
+                continue
+            assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
+            if last_sync_date and assign_date:
+                try:
+                    if datetime.strptime(assign_date, "%m/%d/%Y") <= datetime.strptime(last_sync_date, "%m/%d/%Y"):
+                        skipped += 1
+                        stop_early = True
+                        continue
+                except ValueError:
+                    pass
+            address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
+            lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
+            city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
+            state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
+            lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
+            link = row.query_selector("a")
+            detail_url = link.get_attribute("href") if link else None
+            email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
+            lead = {
+                "name": name, "address": address, "lead_tags": clean_tags,
+                "assign_date": assign_date, "city": city, "state": state,
+                "lead_type": lead_type, "detail_url": detail_url,
+                "email": email, "phone": phone, "dob": dob
+            }
+            leads_data.append(lead)
+            pending_lead = lead
+        except Exception as e:
+            log.warning(f"Row parse error: {e}")
+            continue
+
+    # check if there's a next page
+    is_last = stop_early or (_find_next_btn(page) is None)
+    return leads_data, skipped, skipped_short, skipped_noname, is_last
 
 
 def _save_sync_date(leads_data):
@@ -623,7 +621,6 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
     init_db()
     session_cookie, last_sync_date = _load_sync_settings()
 
-    # Use override creds if provided (manual sync), otherwise fall back to env/DB
     portal_url = override_url.rstrip("/") if override_url else _get_portal_url()
     is_manual = bool(override_url)
     cookie_key = "manual_browser_cookies" if is_manual else "browser_cookies"
@@ -632,6 +629,9 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
         os.environ["_MANUAL_PORTAL_USERNAME"] = override_username
     if override_password:
         os.environ["_MANUAL_PORTAL_PASSWORD"] = override_password
+
+    target_page = _get_sync_page(is_manual)
+    cb(status_callback, f"Syncing page {target_page}..." if target_page > 1 else "Starting sync...")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
@@ -655,37 +655,41 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
                 return 0
             cb(status_callback, "Table ready. Scraping rows...")
 
-            leads_data, skipped, skipped_short, skipped_noname = _scrape_rows(page, last_sync_date, status_callback)
+            leads_data, skipped, skipped_short, skipped_noname, is_last_page = _scrape_rows(
+                page, last_sync_date, status_callback, target_page=target_page
+            )
             if leads_data is None:
                 cb(status_callback, "Sync cancelled.")
                 browser.close()
                 return 0
 
-            cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving to DB...")
-            cb(status_callback, f"Leads with empty lead_type: {sum(1 for l in leads_data if not l.get('lead_type'))}")
+            cb(status_callback, f"Page {target_page}: Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving...")
 
             new_leads, new_lead_names = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
             with_phone = sum(1 for l in leads_data if l.get("phone"))
-            type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
-            cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
-            cb(status_callback, f"Lead types found: {type_samples}")
+            cb(status_callback, f"Checked {len(leads_data)} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
 
-            # Only enrich leads that are new AND missing email or phone
             needs_enrich = [
                 l for l in leads_data
                 if l.get("detail_url") and new_lead_names and l.get("name") in new_lead_names
                 and not (l.get("email") and l.get("phone"))
             ]
-            cb(status_callback, f"Starting enrichment for {len(needs_enrich)} new leads missing contact info...")
             if needs_enrich:
+                cb(status_callback, f"Enriching {len(needs_enrich)} new leads missing contact info...")
                 enrich_leads(needs_enrich, context, status_callback, workers=2)
-            cb(status_callback, "Enrichment complete. Closing browser...")
 
             browser.close()
 
-            newest = _save_sync_date(leads_data)
-            cb(status_callback, f"Last sync date saved as {newest}.")
+            if is_last_page:
+                _clear_sync_page(is_manual)
+                newest = _save_sync_date(leads_data)
+                cb(status_callback, f"All pages done. Last sync date saved as {newest}.")
+            else:
+                next_page = target_page + 1
+                _save_sync_page(next_page, is_manual)
+                cb(status_callback, f"✅ Page {target_page} done — {new_leads} new leads. Sync page {next_page} when ready.")
+
             return new_leads
 
         except Exception as e:
