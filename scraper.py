@@ -910,15 +910,37 @@ def _insert_lead(c, lead, now, existing_emails, existing_no_email):
     city          = lead.get("city", "").strip() or None
     state         = lead.get("state", "").strip() or None
     dob           = lead.get("dob", "").strip() or None
+
     if email:
         if email in existing_emails:
+            # already exists by email — update missing fields only
+            c.execute("""
+                UPDATE leads SET
+                    phone   = COALESCE(NULLIF(phone,''), NULLIF(?, '')),
+                    dob     = COALESCE(NULLIF(dob,''),   NULLIF(?, '')),
+                    address = COALESCE(NULLIF(address,''), NULLIF(?, '')),
+                    city    = COALESCE(NULLIF(city,''),  NULLIF(?, '')),
+                    state   = COALESCE(NULLIF(state,''), NULLIF(?, ''))
+                WHERE email=?
+            """, (phone, dob, address, city, state, email))
             return False, False
         existing_emails.add(email)
     else:
         key = (name, address or "")
         if key in existing_no_email:
+            # already exists by name+address — update missing fields only
+            c.execute("""
+                UPDATE leads SET
+                    phone   = COALESCE(NULLIF(phone,''), NULLIF(?, '')),
+                    email   = COALESCE(NULLIF(email,''), NULLIF(?, '')),
+                    dob     = COALESCE(NULLIF(dob,''),   NULLIF(?, '')),
+                    city    = COALESCE(NULLIF(city,''),  NULLIF(?, '')),
+                    state   = COALESCE(NULLIF(state,''), NULLIF(?, ''))
+                WHERE full_name=? AND (address=? OR address IS NULL)
+            """, (phone, email, dob, city, state, name, address or ""))
             return False, False
         existing_no_email.add(key)
+
     c.execute("""
         INSERT OR IGNORE INTO leads
             (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob)
@@ -935,9 +957,11 @@ def save_leads_bulk(leads, status_callback=None):
     c = conn.cursor()
     existing_emails, existing_no_email = _build_existing_sets(c)
     new_count = 0
+    updated_count = 0
     rejected = 0
     new_names = set()
     for lead in leads:
+        rows_before = c.execute("SELECT changes()").fetchone()[0]
         inserted, is_rejected = _insert_lead(c, lead, now, existing_emails, existing_no_email)
         if is_rejected:
             if rejected < 3:
@@ -946,10 +970,14 @@ def save_leads_bulk(leads, status_callback=None):
         elif inserted:
             new_count += 1
             new_names.add(lead.get("name", ""))
+        else:
+            # check if the UPDATE touched any rows
+            if c.execute("SELECT changes()").fetchone()[0] > 0:
+                updated_count += 1
     conn.commit()
     conn.close()
     if status_callback:
-        status_callback(f"Saved {new_count} new leads to database. Rejected {rejected} sub-rows.")
+        status_callback(f"Saved {new_count} new leads, updated {updated_count} existing. Rejected {rejected} sub-rows.")
     return new_count, new_names
 
 
