@@ -664,15 +664,20 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
             cb(status_callback, f"Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving to DB...")
             cb(status_callback, f"Leads with empty lead_type: {sum(1 for l in leads_data if not l.get('lead_type'))}")
 
-            new_leads = save_leads_bulk(leads_data, status_callback)
+            new_leads, new_lead_names = save_leads_bulk(leads_data, status_callback)
             with_email = sum(1 for l in leads_data if l.get("email"))
             with_phone = sum(1 for l in leads_data if l.get("phone"))
             type_samples = sorted(set(l["lead_type"] for l in leads_data if l.get("lead_type")))
             cb(status_callback, f"Checked {len(leads_data)} | Skipped (old): {skipped} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
             cb(status_callback, f"Lead types found: {type_samples}")
 
-            needs_enrich = [l for l in leads_data if l.get("detail_url")]
-            cb(status_callback, f"Starting enrichment for {len(needs_enrich)} leads...")
+            # Only enrich leads that are new AND missing email or phone
+            needs_enrich = [
+                l for l in leads_data
+                if l.get("detail_url") and new_lead_names and l.get("name") in new_lead_names
+                and not (l.get("email") and l.get("phone"))
+            ]
+            cb(status_callback, f"Starting enrichment for {len(needs_enrich)} new leads missing contact info...")
             if needs_enrich:
                 enrich_leads(needs_enrich, context, status_callback, workers=2)
             cb(status_callback, "Enrichment complete. Closing browser...")
@@ -820,13 +825,14 @@ def _insert_lead(c, lead, now, existing_emails, existing_no_email):
 
 def save_leads_bulk(leads, status_callback=None):
     if not leads:
-        return 0
+        return 0, set()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection()
     c = conn.cursor()
     existing_emails, existing_no_email = _build_existing_sets(c)
     new_count = 0
     rejected = 0
+    new_names = set()
     for lead in leads:
         inserted, is_rejected = _insert_lead(c, lead, now, existing_emails, existing_no_email)
         if is_rejected:
@@ -835,11 +841,12 @@ def save_leads_bulk(leads, status_callback=None):
             rejected += 1
         elif inserted:
             new_count += 1
+            new_names.add(lead.get("name", ""))
     conn.commit()
     conn.close()
     if status_callback:
         status_callback(f"Saved {new_count} new leads to database. Rejected {rejected} sub-rows.")
-    return new_count
+    return new_count, new_names
 
 
 def save_lead(lead):
