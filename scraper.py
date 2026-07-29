@@ -492,16 +492,98 @@ def _scrape_rows(page, last_sync_date, status_callback):
         if stop_early:
             break
 
-        # find and click next page button
+        # discover pagination — read all links/buttons and find one that looks like "next"
         next_btn = None
-        for sel in ["a[aria-label='Next']", "a:has-text('Next')", "li.next a", "a.next", "[data-page='next']"]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible() and btn.is_enabled():
-                    next_btn = btn
-                    break
-            except Exception:
-                continue
+        try:
+            # log pagination area HTML on first page so we can see what's there
+            if page_num == 1:
+                pager = page.query_selector(".pagination, .pager, [class*='page'], nav, [class*='paging'], [id*='page'], [id*='pager']")
+                if pager:
+                    cb(status_callback, f"Pagination HTML: {pager.inner_html()[:600]}")
+                else:
+                    cb(status_callback, "No pagination container found on page.")
+
+            # 1. known CSS/aria selectors
+            for sel in [
+                "a[aria-label='Next']", "a[aria-label='next']", "a[aria-label='Next Page']",
+                "a:has-text('Next')", "button:has-text('Next')",
+                "li.next:not(.disabled) a", "li.PagedList-skipToNext a",
+                "a.next", "button.next", ".next-page a", ".next-page button",
+                "[data-page='next']", "[data-action='next']",
+                ".pagination li:last-child:not(.disabled) a",
+                "a[rel='next']", "link[rel='next']",
+                "input[value='Next']", "input[value='next']",
+                "[class*='next']:not([class*='context']):not([class*='content']) a",
+                "[class*='next']:not([class*='context']):not([class*='content']) button",
+            ]:
+                try:
+                    btn = page.query_selector(sel)
+                    if btn and btn.is_visible() and btn.is_enabled():
+                        next_btn = btn
+                        cb(status_callback, f"Pagination selector matched: {sel!r}")
+                        break
+                except Exception:
+                    continue
+
+            # 2. URL-based: look for a link whose href has page= or PageNumber= incremented
+            if not next_btn:
+                current_url = page.url
+                import re as _re
+                for param in ["page", "PageNumber", "pageNumber", "pg", "p", "offset"]:
+                    m = _re.search(rf"[?&]{param}=(\d+)", current_url)
+                    if m:
+                        next_val = int(m.group(1)) + 1
+                        next_url_pattern = _re.sub(rf"({param}=)\d+", rf"\g<1>{next_val}", current_url)
+                        for el in page.query_selector_all(f"a[href*='{param}={next_val}']"):
+                            try:
+                                if el.is_visible():
+                                    next_btn = el
+                                    cb(status_callback, f"Pagination found via URL param '{param}={next_val}'")
+                                    break
+                            except Exception:
+                                continue
+                        if next_btn:
+                            break
+
+            # 3. text/symbol scan across all clickable elements
+            if not next_btn:
+                next_keywords = ["next", "next page", "›", "»", ">>", "forward", "siguiente", "weiter", "suivant"]
+                for el in page.query_selector_all("a, button, input[type='button'], input[type='submit'], [role='button']"):
+                    try:
+                        txt = (el.inner_text() or "").strip().lower()
+                        href = (el.get_attribute("href") or "").lower()
+                        aria = (el.get_attribute("aria-label") or "").lower()
+                        title = (el.get_attribute("title") or "").lower()
+                        val = (el.get_attribute("value") or "").lower()
+                        combined = " ".join([txt, href, aria, title, val])
+                        if any(kw in combined for kw in next_keywords):
+                            if el.is_visible() and el.is_enabled():
+                                next_btn = el
+                                cb(status_callback, f"Pagination found via text scan: '{el.inner_text().strip() or aria or title}'")
+                                break
+                    except Exception:
+                        continue
+
+            # 4. numeric page links — look for current page number + 1 as a link
+            if not next_btn:
+                try:
+                    active = page.query_selector(".pagination .active a, .pagination .active, [class*='current-page'], [class*='activePage']")
+                    if active:
+                        cur = int((active.inner_text() or "0").strip())
+                        if cur > 0:
+                            for el in page.query_selector_all(".pagination a, [class*='page'] a"):
+                                try:
+                                    if (el.inner_text() or "").strip() == str(cur + 1) and el.is_visible():
+                                        next_btn = el
+                                        cb(status_callback, f"Pagination found via active page number: page {cur} → {cur+1}")
+                                        break
+                                except Exception:
+                                    continue
+                except Exception:
+                    pass
+
+        except Exception as e:
+            log.warning(f"Pagination discovery error: {e}")
         if not next_btn:
             break  # no more pages
         cb(status_callback, f"Moving to page {page_num + 1}...")
