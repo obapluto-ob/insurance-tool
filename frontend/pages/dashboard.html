@@ -120,29 +120,40 @@
 
   function startLogPolling() {
     let doneOnce = false;
-    logInterval = setInterval(async () => {
-      try {
-        const res = await apiFetch("/api/status");
-        const d = await res.json();
-        const logs = d.logs || [];
-        for (let i = seenLogs; i < logs.length; i++) appendLog(logs[i]);
-        seenLogs = logs.length;
-        const bar = document.getElementById("status-bar");
-        if (bar) bar.textContent = d.message;
-        if (!d.running && logs.length > 0 && !doneOnce) {
-          doneOnce = true;
-          clearInterval(logInterval);
-          logInterval = null;
-          appendLog("--- Sync finished. Close this panel when ready. ---");
-          const btn = document.getElementById("sync-btn");
-          if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
-          const manualBtn = document.getElementById("manual-sync-btn");
-          if (manualBtn) { manualBtn.textContent = "Manual Sync"; manualBtn.disabled = false; }
-          const cancelBtn = document.getElementById("cancel-btn");
-          if (cancelBtn) cancelBtn.style.display = "none";
-        }
-      } catch {}
-    }, 3000);
+    let interval = 3000;
+    const MAX_INTERVAL = 30000;
+
+    function schedule() {
+      logInterval = setTimeout(async () => {
+        if (document.visibilityState === "hidden") { schedule(); return; }
+        try {
+          const res = await apiFetch("/api/status");
+          const d = await res.json();
+          const logs = d.logs || [];
+          for (let i = seenLogs; i < logs.length; i++) appendLog(logs[i]);
+          seenLogs = logs.length;
+          const bar = document.getElementById("status-bar");
+          if (bar) bar.textContent = d.message;
+          if (!d.running && logs.length > 0 && !doneOnce) {
+            doneOnce = true;
+            clearTimeout(logInterval);
+            logInterval = null;
+            appendLog("--- Sync finished. Close this panel when ready. ---");
+            const btn = document.getElementById("sync-btn");
+            if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
+            const manualBtn = document.getElementById("manual-sync-btn");
+            if (manualBtn) { manualBtn.textContent = "Manual Sync"; manualBtn.disabled = false; }
+            const cancelBtn = document.getElementById("cancel-btn");
+            if (cancelBtn) cancelBtn.style.display = "none";
+            return;
+          }
+          // backoff: increase interval every poll up to MAX_INTERVAL
+          interval = Math.min(interval * 1.3, MAX_INTERVAL);
+        } catch {}
+        schedule();
+      }, interval);
+    }
+    schedule();
   }
 
   async function cancelSync() {

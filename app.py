@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import threading
 import os
+import time
 import jwt
 from datetime import datetime, timedelta, timezone
 import logging
@@ -150,9 +151,13 @@ def login():
     return jsonify({"error": "Incorrect PIN"}), 401
 
 
+_dashboard_cache = {"data": None, "ts": 0}
+
 @app.route("/api/dashboard")
 @protected
 def dashboard():
+    if time.time() - _dashboard_cache["ts"] < 60 and _dashboard_cache["data"]:
+        return jsonify(_dashboard_cache["data"])
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -179,6 +184,8 @@ def dashboard():
             "responses": row[6] or 0,
         }
         log.info(f"[dashboard] stats: {stats}")
+        _dashboard_cache["data"] = stats
+        _dashboard_cache["ts"] = time.time()
         return jsonify(stats)
     except Exception as e:
         log.error(f"[dashboard] ERROR: {e}")
