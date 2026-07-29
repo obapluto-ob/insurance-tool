@@ -578,7 +578,28 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
             state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
             lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
             link = row.query_selector("a")
-            detail_url = link.get_attribute("href") if link else None
+            detail_url = None
+            if link:
+                href = (link.get_attribute("href") or "").strip()
+                onclick = (link.get_attribute("onclick") or "").strip()
+                # try data attributes first
+                for attr in ["data-url", "data-href", "data-link", "data-detail"]:
+                    val = link.get_attribute(attr)
+                    if val and val.strip() and not val.strip().startswith("javascript"):
+                        detail_url = val.strip()
+                        break
+                # real href
+                if not detail_url and href and not href.startswith("javascript") and href != "#":
+                    detail_url = href
+                # extract URL from onclick e.g. onclick="location.href='/Lead/Detail/123'"
+                if not detail_url and onclick:
+                    import re as _re
+                    m = _re.search(r"['\"]([/][^'\"]+)['\"]", onclick)
+                    if m:
+                        detail_url = m.group(1)
+                # log first 3 rows so we can see what the portal actually provides
+                if len(leads_data) < 3:
+                    cb(status_callback, f"Row link debug — href={href!r} onclick={onclick!r} → detail_url={detail_url!r}")
             email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
             lead = {
                 "name": name, "address": address, "lead_tags": clean_tags,
@@ -672,7 +693,9 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
 
             needs_enrich = [
                 l for l in leads_data
-                if l.get("detail_url") and new_lead_names and l.get("name") in new_lead_names
+                if l.get("detail_url")
+                and not (l.get("detail_url", "").startswith("javascript") or l.get("detail_url") == "#")
+                and l.get("name") in new_lead_names
                 and not (l.get("email") and l.get("phone"))
             ]
             if needs_enrich:
