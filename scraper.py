@@ -621,6 +621,40 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
     return leads_data, skipped, skipped_short, skipped_noname, is_last
 
 
+def _probe_detail_url(page, rows, status_callback):
+    """Click the first real lead row to discover the detail URL pattern."""
+    for row in rows:
+        try:
+            cells = row.query_selector_all("td")
+            if len(cells) < 4:
+                continue
+            name = cells[3].inner_text().strip()
+            if not name or any(name.lower().startswith(p) for p in ["phone", "email", "group", "dob"]):
+                continue
+            current_url = page.url
+            # try clicking the row first, then the name cell
+            for target in [row, cells[3]]:
+                try:
+                    target.click(timeout=5000)
+                    page.wait_for_timeout(1500)
+                    new_url = page.url
+                    if new_url != current_url and "Login" not in new_url:
+                        cb(status_callback, f"Detail URL pattern: {new_url}")
+                        page.go_back(timeout=15000)
+                        try:
+                            page.wait_for_selector("table tbody tr", timeout=10000)
+                        except Exception:
+                            pass
+                        return new_url
+                except Exception:
+                    continue
+        except Exception as e:
+            log.warning(f"Detail probe failed: {e}")
+            continue
+    cb(status_callback, "Could not discover detail URL — portal may use JS event listeners only")
+    return None
+
+
 def _save_sync_date(leads_data):
     dates = [l["assign_date"] for l in leads_data if l.get("assign_date")]
     try:
@@ -678,6 +712,11 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
                 browser.close()
                 return 0
             cb(status_callback, "Table ready. Scraping rows...")
+
+            # on first page only, probe the detail URL pattern once
+            if target_page == 1:
+                probe_rows = page.query_selector_all("table tbody tr")
+                _probe_detail_url(page, probe_rows, status_callback)
 
             leads_data, skipped, skipped_short, skipped_noname, is_last_page = _scrape_rows(
                 page, last_sync_date, status_callback, target_page=target_page
