@@ -280,6 +280,17 @@ def sync_reset():
     return jsonify({"ok": True, "message": "Sync reset. Next sync will pull all leads from scratch."})
 
 
+@app.route("/api/sync/page")
+@protected
+def sync_page():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key='sync_current_page'")
+    row = c.fetchone()
+    conn.close()
+    return jsonify({"page": int(row[0]) if row else 1})
+
+
 @app.route("/api/sync")
 @protected
 def sync():

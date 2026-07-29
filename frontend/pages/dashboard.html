@@ -19,20 +19,25 @@
 
   async function load() {
     try {
-      const res = await apiFetch("/api/dashboard");
-      if (!res.ok) {
-        const txt = await res.text();
-        console.error("[dashboard] /api/dashboard error:", res.status, txt);
-        document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load dashboard (${res.status}). Check console for details.</div>`;
+      const [dashRes, pageRes] = await Promise.all([
+        apiFetch("/api/dashboard"),
+        apiFetch("/api/sync/page")
+      ]);
+      if (!dashRes.ok) {
+        const txt = await dashRes.text();
+        console.error("[dashboard] /api/dashboard error:", dashRes.status, txt);
+        document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load dashboard (${dashRes.status}). Check console for details.</div>`;
         return;
       }
-      const d = await res.json();
+      const d = await dashRes.json();
+      const pd = await pageRes.json();
+      const syncLabel = pd.page > 1 ? `Sync Page ${pd.page}` : "Sync Portal";
       console.log("[dashboard] stats:", d);
       document.getElementById("page-content").innerHTML = `
       <div class="page-header">
         <h1>Dashboard</h1>
         <div class="actions">
-          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">Sync Portal</button>
+          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">${syncLabel}</button>
           <button class="btn btn-secondary" id="manual-sync-btn" onclick="manualSync(this)">Manual Sync</button>
           <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">Check Replies</button>
           <button class="btn btn-danger" onclick="resetSync()">Reset Sync</button>
@@ -139,10 +144,9 @@
             clearTimeout(logInterval);
             logInterval = null;
             appendLog("--- Sync finished. Close this panel when ready. ---");
-            // update button to show next page
             const btn = document.getElementById("sync-btn");
             if (btn) {
-              apiFetch("/api/sync").then(r => r.json()).then(nd => {
+              apiFetch("/api/sync/page").then(r => r.json()).then(nd => {
                 btn.textContent = nd.page > 1 ? `Sync Page ${nd.page}` : "Sync Portal";
                 btn.disabled = false;
               }).catch(() => { btn.textContent = "Sync Portal"; btn.disabled = false; });
