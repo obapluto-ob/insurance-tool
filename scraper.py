@@ -406,82 +406,115 @@ def _navigate_to_inbox(page, status_callback, portal_url=None, inbox_url_key="in
 
 
 def _scrape_rows(page, last_sync_date, status_callback):
-    """Scrape all table rows and return (leads_data, skipped, skipped_short, skipped_noname)."""
-    rows = page.query_selector_all("table tbody tr")
-    mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
-    cb(status_callback, f"Found {len(rows)} rows — {mode}")
-
-    leads_data = []
+    """Scrape all table rows across all pages. Returns (leads_data, skipped, skipped_short, skipped_noname)."""
+    all_leads = []
     skipped = skipped_short = skipped_noname = 0
-    pending_lead = None
+    page_num = 1
+    stop_early = False
 
-    for row in rows:
-        if is_cancelled():
-            return None, skipped, skipped_short, skipped_noname
+    while not stop_early:
+        rows = page.query_selector_all("table tbody tr")
+        mode = f"since {last_sync_date}" if last_sync_date else "full sync (first time)"
+        cb(status_callback, f"Page {page_num}: Found {len(rows)} rows — {mode}")
+
+        leads_data = []
+        pending_lead = None
+
+        for row in rows:
+            if is_cancelled():
+                return None, skipped, skipped_short, skipped_noname
+            try:
+                cells = row.query_selector_all("td")
+                if len(cells) < 4:
+                    if pending_lead and len(cells) >= 2:
+                        for cell in cells:
+                            txt = cell.inner_text().strip()
+                            low = txt.lower()
+                            if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
+                                val = txt.split(":", 1)[1].strip()
+                                if val and not pending_lead["phone"]:
+                                    pending_lead["phone"] = val
+                            elif low.startswith("email:") and "@" in txt:
+                                val = txt.split(":", 1)[1].strip()
+                                if val and not pending_lead["email"]:
+                                    pending_lead["email"] = val
+                    skipped_short += 1
+                    continue
+                name = cells[3].inner_text().strip()
+                if not name:
+                    if pending_lead:
+                        for cell in cells:
+                            txt = cell.inner_text().strip()
+                            low = txt.lower()
+                            if low.startswith("email:") and "@" in txt:
+                                val = txt.split(":", 1)[1].strip()
+                                if val and not pending_lead["email"]:
+                                    pending_lead["email"] = val
+                            elif low.startswith("dob :") or low.startswith("dob:"):
+                                val = txt.split(":", 1)[1].strip()
+                                if val and not pending_lead["dob"]:
+                                    pending_lead["dob"] = val
+                    skipped_noname += 1
+                    continue
+                assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
+                if last_sync_date and assign_date:
+                    try:
+                        if datetime.strptime(assign_date, "%m/%d/%Y") <= datetime.strptime(last_sync_date, "%m/%d/%Y"):
+                            skipped += 1
+                            stop_early = True  # rows are date-sorted, stop paging
+                            continue
+                    except ValueError:
+                        pass
+                address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
+                lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
+                city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
+                state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
+                lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
+                if not lead_type and len(cells) <= 11 and len(all_leads) < 3:
+                    cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
+                link = row.query_selector("a")
+                detail_url = link.get_attribute("href") if link else None
+                email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
+                lead = {
+                    "name": name, "address": address, "lead_tags": clean_tags,
+                    "assign_date": assign_date, "city": city, "state": state,
+                    "lead_type": lead_type, "detail_url": detail_url,
+                    "email": email, "phone": phone, "dob": dob
+                }
+                leads_data.append(lead)
+                pending_lead = lead
+            except Exception as e:
+                log.warning(f"Row parse error: {e}")
+                continue
+
+        all_leads.extend(leads_data)
+
+        if stop_early:
+            break
+
+        # find and click next page button
+        next_btn = None
+        for sel in ["a[aria-label='Next']", "a:has-text('Next')", "li.next a", "a.next", "[data-page='next']"]:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible() and btn.is_enabled():
+                    next_btn = btn
+                    break
+            except Exception:
+                continue
+        if not next_btn:
+            break  # no more pages
+        cb(status_callback, f"Moving to page {page_num + 1}...")
         try:
-            cells = row.query_selector_all("td")
-            if len(cells) < 4:
-                if pending_lead and len(cells) >= 2:
-                    for cell in cells:
-                        txt = cell.inner_text().strip()
-                        low = txt.lower()
-                        if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
-                            val = txt.split(":", 1)[1].strip()
-                            if val and not pending_lead["phone"]:
-                                pending_lead["phone"] = val
-                        elif low.startswith("email:") and "@" in txt:
-                            val = txt.split(":", 1)[1].strip()
-                            if val and not pending_lead["email"]:
-                                pending_lead["email"] = val
-                skipped_short += 1
-                continue
-            name = cells[3].inner_text().strip()
-            if not name:
-                if pending_lead:
-                    for cell in cells:
-                        txt = cell.inner_text().strip()
-                        low = txt.lower()
-                        if low.startswith("email:") and "@" in txt:
-                            val = txt.split(":", 1)[1].strip()
-                            if val and not pending_lead["email"]:
-                                pending_lead["email"] = val
-                        elif low.startswith("dob :") or low.startswith("dob:"):
-                            val = txt.split(":", 1)[1].strip()
-                            if val and not pending_lead["dob"]:
-                                pending_lead["dob"] = val
-                skipped_noname += 1
-                continue
-            assign_date = cells[7].inner_text().strip() if len(cells) > 7 else ""
-            if last_sync_date and assign_date:
-                try:
-                    if datetime.strptime(assign_date, "%m/%d/%Y") <= datetime.strptime(last_sync_date, "%m/%d/%Y"):
-                        skipped += 1
-                        continue
-                except ValueError:
-                    pass
-            address   = cells[4].inner_text().strip() if len(cells) > 4 else ""
-            lead_tags = cells[5].inner_text().strip() if len(cells) > 5 else ""
-            city      = cells[9].inner_text().strip() if len(cells) > 9 else ""
-            state     = cells[10].inner_text().strip() if len(cells) > 10 else ""
-            lead_type = cells[11].inner_text().strip() if len(cells) > 11 else ""
-            if not lead_type and len(cells) <= 11 and len(leads_data) < 3:
-                cb(status_callback, f"Short main row ({len(cells)} cells): {[c.inner_text().strip()[:30] for c in cells]}")
-            link = row.query_selector("a")
-            detail_url = link.get_attribute("href") if link else None
-            email, phone, dob, clean_tags = _parse_lead_tags(lead_tags)
-            lead = {
-                "name": name, "address": address, "lead_tags": clean_tags,
-                "assign_date": assign_date, "city": city, "state": state,
-                "lead_type": lead_type, "detail_url": detail_url,
-                "email": email, "phone": phone, "dob": dob
-            }
-            leads_data.append(lead)
-            pending_lead = lead
+            next_btn.click()
+            page.wait_for_selector("table tbody tr", timeout=15000)
+            page.wait_for_timeout(1000)
+            page_num += 1
         except Exception as e:
-            log.warning(f"Row parse error: {e}")
-            continue
+            log.warning(f"Pagination click failed: {e}")
+            break
 
-    return leads_data, skipped, skipped_short, skipped_noname
+    return all_leads, skipped, skipped_short, skipped_noname
 
 
 def _save_sync_date(leads_data):
