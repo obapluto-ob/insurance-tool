@@ -53,6 +53,22 @@ def is_cancelled():
         return False
 
 
+import re as _re
+
+def _clean_phone(val):
+    """Extract just the phone number, strip trailing junk."""
+    val = val.strip()
+    m = _re.match(r'[\(\+]?[\d\s\(\)\-\.]{7,20}', val)
+    return m.group(0).strip() if m else val.split()[0]
+
+
+def _clean_email(val):
+    """Extract just the email address, strip trailing junk."""
+    val = val.strip()
+    m = _re.match(r'[\w.+\-]+@[\w.\-]+\.[a-zA-Z]{2,}', val)
+    return m.group(0).strip() if m else val.split()[0]
+
+
 def _parse_lead_tags(lead_tags):
     """Extract email, phone and DOB from lead_tags field. Returns (email, phone, dob, clean_tags)"""
     email = ""
@@ -65,13 +81,13 @@ def _parse_lead_tags(lead_tags):
             continue
         low = line.lower()
         if low.startswith("email:"):
-            val = line[6:].strip()
+            val = _clean_email(line[6:].strip())
             if "@" in val:
                 email = val
         elif low.startswith("dob :") or low.startswith("dob:"):
             dob = line.split(":", 1)[1].strip()
         elif low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:") or low.startswith("tel:"):
-            phone = line.split(":", 1)[1].strip()
+            phone = _clean_phone(line.split(":", 1)[1].strip())
         else:
             clean_lines.append(line)
     return LeadTags(email=email, phone=phone, dob=dob, clean_tags=" | ".join(clean_lines))
@@ -565,12 +581,12 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
                         txt = cell.inner_text().strip()
                         low = txt.lower()
                         if low.startswith("phone no:") or low.startswith("phone:") or low.startswith("cell:") or low.startswith("mobile:"):
-                            val = txt.split(":", 1)[1].strip()
-                            digits = ''.join(c for c in val if c.isdigit())
+                            val = _clean_phone(txt.split(":", 1)[1].strip())
+                            digits = ''.join(d for d in val if d.isdigit())
                             if val and len(digits) >= 7 and not pending_lead["phone"]:
                                 pending_lead["phone"] = val
                         elif low.startswith("email:") and "@" in txt:
-                            val = txt.split(":", 1)[1].strip()
+                            val = _clean_email(txt.split(":", 1)[1].strip())
                             if val and not pending_lead["email"]:
                                 pending_lead["email"] = val
                         elif low.startswith("dob:") or low.startswith("dob :"):
@@ -837,17 +853,19 @@ def _scrape_detail(page, url):
 def _save_enriched(lead, detail: LeadDetail):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("""
-        UPDATE leads SET
-            phone   = COALESCE(NULLIF(phone,''),   NULLIF(?, '')),
-            email   = COALESCE(email,              NULLIF(?, '')),
-            dob     = COALESCE(NULLIF(dob,''),     NULLIF(?, '')),
-            address = COALESCE(NULLIF(address,''), NULLIF(?, '')),
-            city    = COALESCE(NULLIF(city,''),    NULLIF(?, '')),
-            state   = COALESCE(NULLIF(state,''),   NULLIF(?, '')),
-            enriched = 1
-        WHERE full_name=?
-    """, (detail.phone, detail.email, detail.dob, detail.address, detail.city, detail.state, lead["name"]))
+    c.execute(
+        "UPDATE leads SET"
+        " phone   = CASE WHEN (phone   IS NULL OR phone   = '') AND ? IS NOT NULL THEN ? ELSE phone   END,"
+        " email   = CASE WHEN (email   IS NULL OR email   = '') AND ? IS NOT NULL THEN ? ELSE email   END,"
+        " dob     = CASE WHEN (dob     IS NULL OR dob     = '') AND ? IS NOT NULL THEN ? ELSE dob     END,"
+        " address = CASE WHEN (address IS NULL OR address = '') AND ? IS NOT NULL THEN ? ELSE address END,"
+        " city    = CASE WHEN (city    IS NULL OR city    = '') AND ? IS NOT NULL THEN ? ELSE city    END,"
+        " state   = CASE WHEN (state   IS NULL OR state   = '') AND ? IS NOT NULL THEN ? ELSE state   END,"
+        " enriched = 1"
+        " WHERE full_name = ?",
+        (detail.phone, detail.phone, detail.email, detail.email, detail.dob, detail.dob,
+         detail.address, detail.address, detail.city, detail.city, detail.state, detail.state, lead["name"])
+    )
     conn.commit()
     conn.close()
 
