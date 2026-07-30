@@ -593,6 +593,14 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
                             val = txt.split(":", 1)[1].strip()
                             if val and not pending_lead["dob"]:
                                 pending_lead["dob"] = val
+                        elif low.startswith("group:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead.get("lead_group"):
+                                pending_lead["lead_group"] = val
+                        elif low.startswith("appointment status:"):
+                            val = txt.split(":", 1)[1].strip()
+                            if val and not pending_lead.get("appointment_status"):
+                                pending_lead["appointment_status"] = val
                 # log first 3 info rows so we can see what data is in them
                 if skipped_short < 3:
                     cb(status_callback, f"Info row cells: {[c.inner_text().strip()[:40] for c in cells]}")
@@ -659,7 +667,8 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
                 "name": name, "address": address, "lead_tags": clean_tags,
                 "assign_date": assign_date, "city": city, "state": state,
                 "lead_type": lead_type, "detail_url": detail_url,
-                "email": email, "phone": phone, "dob": dob
+                "email": email, "phone": phone, "dob": dob,
+                "lead_group": "", "appointment_status": ""
             }
             leads_data.append(lead)
             pending_lead = lead
@@ -928,6 +937,8 @@ def _insert_lead(c, lead, now, existing_emails, existing_no_email):
     city          = lead.get("city", "").strip() or None
     state         = lead.get("state", "").strip() or None
     dob           = lead.get("dob", "").strip() or None
+    lead_group         = lead.get("lead_group", "").strip() or None
+    appointment_status = lead.get("appointment_status", "").strip() or None
 
     if email:
         if email in existing_emails:
@@ -937,9 +948,12 @@ def _insert_lead(c, lead, now, existing_emails, existing_no_email):
                 " dob     = CASE WHEN (dob     IS NULL OR dob     = '') AND ? IS NOT NULL THEN ? ELSE dob     END,"
                 " address = CASE WHEN (address IS NULL OR address = '') AND ? IS NOT NULL THEN ? ELSE address END,"
                 " city    = CASE WHEN (city    IS NULL OR city    = '') AND ? IS NOT NULL THEN ? ELSE city    END,"
-                " state   = CASE WHEN (state   IS NULL OR state   = '') AND ? IS NOT NULL THEN ? ELSE state   END"
+                " state   = CASE WHEN (state   IS NULL OR state   = '') AND ? IS NOT NULL THEN ? ELSE state   END,"
+                " lead_group         = CASE WHEN (lead_group         IS NULL OR lead_group         = '') AND ? IS NOT NULL THEN ? ELSE lead_group         END,"
+                " appointment_status = CASE WHEN (appointment_status IS NULL OR appointment_status = '') AND ? IS NOT NULL THEN ? ELSE appointment_status END"
                 " WHERE email = ?",
-                (phone, phone, dob, dob, address, address, city, city, state, state, email)
+                (phone, phone, dob, dob, address, address, city, city, state, state,
+                 lead_group, lead_group, appointment_status, appointment_status, email)
             )
             return False, False
         existing_emails.add(email)
@@ -952,18 +966,21 @@ def _insert_lead(c, lead, now, existing_emails, existing_no_email):
                 " email   = CASE WHEN (email IS NULL OR email = '') AND ? IS NOT NULL THEN ? ELSE email END,"
                 " dob     = CASE WHEN (dob   IS NULL OR dob   = '') AND ? IS NOT NULL THEN ? ELSE dob   END,"
                 " city    = CASE WHEN (city  IS NULL OR city  = '') AND ? IS NOT NULL THEN ? ELSE city  END,"
-                " state   = CASE WHEN (state IS NULL OR state = '') AND ? IS NOT NULL THEN ? ELSE state END"
+                " state   = CASE WHEN (state IS NULL OR state = '') AND ? IS NOT NULL THEN ? ELSE state END,"
+                " lead_group         = CASE WHEN (lead_group         IS NULL OR lead_group         = '') AND ? IS NOT NULL THEN ? ELSE lead_group         END,"
+                " appointment_status = CASE WHEN (appointment_status IS NULL OR appointment_status = '') AND ? IS NOT NULL THEN ? ELSE appointment_status END"
                 " WHERE full_name = ? AND (address = ? OR address IS NULL)",
-                (phone, phone, email, email, dob, dob, city, city, state, state, name, address or "")
+                (phone, phone, email, email, dob, dob, city, city, state, state,
+                 lead_group, lead_group, appointment_status, appointment_status, name, address or "")
             )
             return False, False
         existing_no_email.add(key)
 
     c.execute("""
         INSERT OR IGNORE INTO leads
-            (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (name, email, phone, policy_status, "planetaltig.com", now, detail_url, address, city, state, dob))
+            (full_name, email, phone, policy_status, source, date_scraped, detail_url, address, city, state, dob, lead_group, appointment_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, email, phone, policy_status, "planetaltig.com", now, detail_url, address, city, state, dob, lead_group, appointment_status))
     return True, False
 
 

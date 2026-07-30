@@ -135,7 +135,9 @@ def init_db():
             dob TEXT,
             address TEXT,
             city TEXT,
-            state TEXT
+            state TEXT,
+            lead_group TEXT,
+            appointment_status TEXT
         )
     ''')
     c.execute('''
@@ -164,6 +166,8 @@ def init_db():
         ("address",          "TEXT"),
         ("city",             "TEXT"),
         ("state",            "TEXT"),
+        ("lead_group",       "TEXT"),
+        ("appointment_status", "TEXT"),
     ]:
         try:
             ac = get_connection()

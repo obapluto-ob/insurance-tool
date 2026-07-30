@@ -56,6 +56,9 @@
           <td>${l.email || "<span class='flag-missing'>Missing</span>"}</td>
           <td>${l.phone ? `<a href="tel:${l.phone}" class="call-link">📞 ${l.phone}</a>` : "—"}</td>
           <td>${l.dob || "—"}</td>
+          <td>${l.address ? `${l.address}${l.city ? ', ' + l.city : ''}${l.state ? ', ' + l.state : ''}` : "—"}</td>
+          <td>${l.lead_group || "—"}</td>
+          <td>${l.appointment_status || "—"}</td>
           <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
           <td>${l.policy_status && l.policy_status !== "Unknown" ? l.policy_status : "<span class='flag-missing'>Missing</span>"}</td>
           <td>${l.email_sent ? `<span class='status-yes'>Sent ×${l.times_emailed||1}</span>` : "<span class='status-no'>No</span>"}</td>
@@ -63,7 +66,7 @@
           <td>${flags}</td>
         </tr>
       `;
-    }).join("") || `<tr><td colspan="10" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
+    }).join("") || `<tr><td colspan="13" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
 
     document.getElementById("page-content").innerHTML = `
       <div class="page-header">
@@ -82,7 +85,7 @@
           <thead>
             <tr>
               <th><input type="checkbox" onclick="toggleAll(this)"/></th>
-              <th>Name</th><th>Email</th><th>Phone</th><th>DOB</th>
+              <th>Name</th><th>Email</th><th>Phone</th><th>DOB</th><th>Address</th><th>Group</th><th>Appt Status</th>
               <th>Category</th><th>Policy Status</th><th>Emailed</th><th>Response</th><th>Flags</th>
             </tr>
           </thead>
