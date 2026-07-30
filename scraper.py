@@ -574,7 +574,7 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
 
             # detect info rows that have 4+ cells but contain contact data, not a lead name
             # e.g. cells[3] = "Phone no: (720) 989-8532" or "Group: REFERRAL"
-            info_prefixes = ["phone no:", "phone:", "cell:", "mobile:", "email:", "group:", "dob:", "dob :", "name:"]
+            info_prefixes = ["phone no:", "phone:", "cell:", "mobile:", "email:", "group:", "dob:", "dob :", "age:", "age :", "name:"]
             if any(row_low.startswith(p) or (cells[3].inner_text().strip().lower().startswith(p)) for p in info_prefixes):
                 if pending_lead:
                     for cell in cells:
@@ -589,7 +589,7 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
                             val = _clean_email(txt.split(":", 1)[1].strip())
                             if val and not pending_lead["email"]:
                                 pending_lead["email"] = val
-                        elif low.startswith("dob:") or low.startswith("dob :"):
+                        elif low.startswith("dob:") or low.startswith("dob :") or low.startswith("age:") or low.startswith("age :"):
                             val = txt.split(":", 1)[1].strip()
                             if val and not pending_lead["dob"]:
                                 pending_lead["dob"] = val
