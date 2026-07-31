@@ -678,6 +678,10 @@ def _scrape_rows(page, last_sync_date, status_callback, target_page=1):
 
     # check if there's a next page
     is_last = stop_early or (_find_next_btn(page) is None)
+    # log first and last assign dates so we can determine portal sort order
+    dates = [l["assign_date"] for l in leads_data if l.get("assign_date")]
+    if dates:
+        cb(status_callback, f"Page {target_page} date range: {dates[0]} → {dates[-1]} ({len(dates)} dated leads)")
     return leads_data, skipped, skipped_short, skipped_noname, is_last
 
 
@@ -729,7 +733,7 @@ def _save_sync_date(leads_data):
     return newest
 
 
-def run_scraper(status_callback=None, override_url=None, override_username=None, override_password=None):
+def run_scraper(status_callback=None, override_url=None, override_username=None, override_password=None, full_pull=False):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -748,8 +752,24 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
     if override_password:
         os.environ["_MANUAL_PORTAL_PASSWORD"] = override_password
 
-    target_page = _get_sync_page(is_manual)
-    cb(status_callback, f"Syncing page {target_page}..." if target_page > 1 else "Starting sync...")
+    # daily sync always starts at page 1, full pull resumes from saved page
+    target_page = 1 if not full_pull else _get_sync_page(is_manual)
+    if full_pull:
+        cb(status_callback, f"Full pull — resuming from page {target_page}..." if target_page > 1 else "Full pull — starting from page 1...")
+    else:
+        cb(status_callback, "Starting sync...")
+
+    # load existing names once for daily sync duplicate detection
+    existing_names = set()
+    if not full_pull:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute("SELECT full_name FROM leads")
+            existing_names = {row[0] for row in c.fetchall() if row[0]}
+            conn.close()
+        except Exception as e:
+            log.warning(f"Could not load existing names: {e}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=[
@@ -773,49 +793,88 @@ def run_scraper(status_callback=None, override_url=None, override_username=None,
                 return 0
             cb(status_callback, "Table ready. Scraping rows...")
 
-            # on first page only, probe the detail URL pattern once
+            # probe detail URL pattern once on page 1
             if target_page == 1:
                 probe_rows = page.query_selector_all("table tbody tr")
                 _probe_detail_url(page, probe_rows, status_callback)
 
-            leads_data, skipped, skipped_short, skipped_noname, is_last_page = _scrape_rows(
-                page, last_sync_date, status_callback, target_page=target_page
-            )
-            if leads_data is None:
-                cb(status_callback, "Sync cancelled.")
-                browser.close()
-                return 0
+            total_new = 0
+            current_page = target_page
 
-            cb(status_callback, f"Page {target_page}: Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving...")
+            while True:
+                if is_cancelled():
+                    cb(status_callback, "Sync cancelled.")
+                    browser.close()
+                    return total_new
 
-            new_leads, new_lead_names = save_leads_bulk(leads_data, status_callback)
-            with_email = sum(1 for l in leads_data if l.get("email"))
-            with_phone = sum(1 for l in leads_data if l.get("phone"))
-            cb(status_callback, f"Checked {len(leads_data)} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
+                leads_data, skipped, skipped_short, skipped_noname, is_last_page = _scrape_rows(
+                    page, last_sync_date if full_pull else None, status_callback, target_page=current_page
+                )
+                if leads_data is None:
+                    cb(status_callback, "Sync cancelled.")
+                    browser.close()
+                    return total_new
 
-            needs_enrich = [
-                l for l in leads_data
-                if l.get("detail_url")
-                and not (l.get("detail_url", "").startswith("javascript") or l.get("detail_url") == "#")
-                and l.get("name") in new_lead_names
-                and not (l.get("email") and l.get("phone"))
-            ]
-            if needs_enrich:
-                cb(status_callback, f"Enriching {len(needs_enrich)} new leads missing contact info...")
-                enrich_leads(needs_enrich, context, status_callback, workers=2)
+                # daily sync: stop if we hit a name already in DB
+                if not full_pull and existing_names:
+                    fresh = [l for l in leads_data if l.get("name") not in existing_names]
+                    if len(fresh) < len(leads_data):
+                        cb(status_callback, f"Found {len(leads_data) - len(fresh)} known leads — stopping at page {current_page}.")
+                        leads_data = fresh
+                        is_last_page = True
+
+                cb(status_callback, f"Page {current_page}: Scraped {len(leads_data)} rows (skipped {skipped} old, {skipped_short} short-row, {skipped_noname} no-name). Saving...")
+
+                new_leads, new_lead_names = save_leads_bulk(leads_data, status_callback)
+                total_new += new_leads
+                with_email = sum(1 for l in leads_data if l.get("email"))
+                with_phone = sum(1 for l in leads_data if l.get("phone"))
+                cb(status_callback, f"Checked {len(leads_data)} | New: {new_leads} | With email: {with_email} | With phone: {with_phone}")
+
+                needs_enrich = [
+                    l for l in leads_data
+                    if l.get("detail_url")
+                    and not (l.get("detail_url", "").startswith("javascript") or l.get("detail_url") == "#")
+                    and l.get("name") in new_lead_names
+                    and not (l.get("email") and l.get("phone"))
+                ]
+                if needs_enrich:
+                    cb(status_callback, f"Enriching {len(needs_enrich)} new leads missing contact info...")
+                    enrich_leads(needs_enrich, context, status_callback, workers=2)
+
+                if is_last_page or not full_pull:
+                    break
+
+                # full pull: move to next page without closing browser
+                next_btn = _find_next_btn(page)
+                if not next_btn:
+                    is_last_page = True
+                    break
+                try:
+                    next_btn.click()
+                    page.wait_for_selector("table tbody tr", timeout=15000)
+                    page.wait_for_timeout(1000)
+                    current_page += 1
+                except Exception as e:
+                    log.warning(f"Pagination failed on page {current_page}: {e}")
+                    break
 
             browser.close()
 
-            if is_last_page:
-                _clear_sync_page(is_manual)
-                newest = _save_sync_date(leads_data)
-                cb(status_callback, f"All pages done. Last sync date saved as {newest}.")
+            if full_pull:
+                if is_last_page:
+                    _clear_sync_page(is_manual)
+                    newest = _save_sync_date([])
+                    cb(status_callback, f"Full pull complete. All pages done. {total_new} total new leads added.")
+                else:
+                    _save_sync_page(current_page + 1, is_manual)
+                    cb(status_callback, f"Full pull paused at page {current_page}. {total_new} new leads so far. Run again to continue.")
             else:
-                next_page = target_page + 1
-                _save_sync_page(next_page, is_manual)
-                cb(status_callback, f"✅ Page {target_page} done — {new_leads} new leads. Sync page {next_page} when ready.")
+                if leads_data:
+                    _save_sync_date(leads_data)
+                cb(status_callback, f"Sync complete. {total_new} new leads added.")
 
-            return new_leads
+            return total_new
 
         except Exception as e:
             log.exception(f"SCRAPER ERROR: {e}")

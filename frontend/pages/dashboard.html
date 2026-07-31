@@ -37,7 +37,8 @@
       <div class="page-header">
         <h1>Dashboard</h1>
         <div class="actions">
-          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">${syncLabel}</button>
+          <button class="btn btn-primary" id="sync-btn" onclick="syncPortal(this)">Sync Portal</button>
+          <button class="btn btn-warning" id="full-pull-btn" onclick="fullPull(this)">Full Pull</button>
           <button class="btn btn-secondary" id="manual-sync-btn" onclick="manualSync(this)">Manual Sync</button>
           <button class="btn btn-secondary" id="replies-btn" onclick="checkReplies(this)">Check Replies</button>
           <button class="btn btn-danger" onclick="resetSync()">Reset Sync</button>
@@ -145,12 +146,9 @@
             logInterval = null;
             appendLog("--- Sync finished. Close this panel when ready. ---");
             const btn = document.getElementById("sync-btn");
-            if (btn) {
-              apiFetch("/api/sync/page").then(r => r.json()).then(nd => {
-                btn.textContent = nd.page > 1 ? `Sync Page ${nd.page}` : "Sync Portal";
-                btn.disabled = false;
-              }).catch(() => { btn.textContent = "Sync Portal"; btn.disabled = false; });
-            }
+            if (btn) { btn.textContent = "Sync Portal"; btn.disabled = false; }
+            const fullBtn = document.getElementById("full-pull-btn");
+            if (fullBtn) { fullBtn.textContent = "Full Pull"; fullBtn.disabled = false; }
             const manualBtn = document.getElementById("manual-sync-btn");
             if (manualBtn) { manualBtn.textContent = "Manual Sync"; manualBtn.disabled = false; }
             const cancelBtn = document.getElementById("cancel-btn");
@@ -198,11 +196,21 @@
     const res = await apiFetch("/api/sync");
     const d = await res.json();
     if (!d.ok) { alert(d.message || "Sync already running."); return; }
-    const page = d.page || 1;
-    btn.textContent = `Syncing page ${page}...`;
+    btn.textContent = "Syncing...";
     btn.disabled = true;
-    openLog(`Sync Log — Page ${page}`);
+    openLog("Sync Log — Live Output");
     appendLog("Connecting to portal...");
+    startLogPolling();
+  }
+
+  async function fullPull(btn) {
+    const res = await apiFetch("/api/full-pull");
+    const d = await res.json();
+    if (!d.ok) { alert(d.message || "Sync already running."); return; }
+    btn.textContent = "Pulling...";
+    btn.disabled = true;
+    openLog("Full Pull — Live Output");
+    appendLog("Starting full pull...");
     startLogPolling();
   }
 

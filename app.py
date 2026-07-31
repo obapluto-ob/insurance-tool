@@ -111,11 +111,16 @@ def run_task(fn, *args):
     threading.Thread(target=wrapper, daemon=True).start()
 
 def scraper_task(cb):
-    cb("Starting sync...")
     count = run_scraper(cb)
     cb("Categorizing leads...")
     categorize_all_leads(cb)
     cb(f"✅ Done — {count} new leads added.")
+
+def full_pull_task(cb):
+    count = run_scraper(cb, full_pull=True)
+    cb("Categorizing leads...")
+    categorize_all_leads(cb)
+    cb(f"✅ Full pull done — {count} new leads added.")
 
 def manual_sync_task(cb, portal_url, portal_username, portal_password):
     cb("Starting manual sync...")
@@ -295,17 +300,17 @@ def sync_page():
 @protected
 def sync():
     if task_status["running"]:
-        log.warning("[sync] already running, ignoring duplicate request")
         return jsonify({"ok": False, "message": "Sync already running"})
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key='sync_current_page'")
-    row = c.fetchone()
-    conn.close()
-    current_page = int(row[0]) if row else 1
-    log.info(f"[sync] starting page {current_page}")
     run_task(scraper_task)
-    return jsonify({"ok": True, "page": current_page})
+    return jsonify({"ok": True})
+
+@app.route("/api/full-pull")
+@protected
+def full_pull():
+    if task_status["running"]:
+        return jsonify({"ok": False, "message": "Sync already running"})
+    run_task(full_pull_task)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/debug/schema")
