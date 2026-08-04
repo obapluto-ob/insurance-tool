@@ -179,6 +179,18 @@ main.with-sidebar {
   font-size: 12px;
 }
 
+.quick-sms-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d4e;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
 /* ── Quick Actions ── */
 .quick-actions {
   padding: 0 28px 28px;

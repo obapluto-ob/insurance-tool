@@ -92,6 +92,16 @@
         <span class="tag tag-active">Active Appt — do NOT SMS</span>
       </div>
       <div id="sms-log" style="display:none; background:#1a1a2e; color:#00ff88; font-family:monospace; font-size:12px; padding:10px; margin-bottom:10px; border-radius:6px; max-height:150px; overflow-y:auto;"></div>
+      <div class="quick-sms-bar">
+        <span style="font-size:13px; color:#9ca3af;">📱 Quick SMS:</span>
+        <input type="text" id="quick-name" placeholder="Name (optional)" style="width:140px;"/>
+        <input type="text" id="quick-number" placeholder="+12025551234" style="width:150px;"/>
+        <select id="quick-template" class="select-input" style="width:160px;">
+          ${templates.map(t => `<option>${t}</option>`).join("")}
+        </select>
+        <button class="btn btn-primary" onclick="sendQuickSms()">📤 Send</button>
+        <span id="quick-sms-result" style="font-size:12px;"></span>
+      </div>
       <div class="table-wrap">
         <table class="leads-table">
           <thead>
@@ -148,6 +158,35 @@
         }
       } catch (_) {}
     }, 1500);
+  }
+
+  async function sendQuickSms() {
+    const number = document.getElementById("quick-number").value.trim();
+    const name   = document.getElementById("quick-name").value.trim() || "Valued Customer";
+    const template = document.getElementById("quick-template").value;
+    const result = document.getElementById("quick-sms-result");
+    if (!number) { result.textContent = "Enter a number."; result.style.color = "#ef4444"; return; }
+    result.textContent = "Sending...";
+    result.style.color = "#9ca3af";
+    try {
+      const res = await apiFetch("/api/quick-sms", {
+        method: "POST",
+        body: JSON.stringify({ to: number, name, template })
+      });
+      const d = await res.json();
+      if (d.ok) {
+        result.textContent = "✅ Sent!";
+        result.style.color = "#00ff88";
+        document.getElementById("quick-number").value = "";
+        document.getElementById("quick-name").value = "";
+      } else {
+        result.textContent = "❌ " + (d.error || "Failed");
+        result.style.color = "#ef4444";
+      }
+    } catch (e) {
+      result.textContent = "❌ " + e.message;
+      result.style.color = "#ef4444";
+    }
   }
 
   async function sendSelected(btn) {

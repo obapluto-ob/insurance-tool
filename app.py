@@ -375,6 +375,20 @@ def check_replies_route():
     return jsonify({"ok": True})
 
 
+@app.route("/api/quick-sms", methods=["POST"])
+@protected
+def quick_sms():
+    data = request.get_json()
+    to       = data.get("to", "").strip()
+    name     = data.get("name", "Valued Customer").strip() or "Valued Customer"
+    template = data.get("template", "Will Kit")
+    if not to:
+        return jsonify({"ok": False, "error": "Phone number required"}), 400
+    from messenger import send_message
+    ok = send_message({"id": 0, "full_name": name, "phone": to}, template)
+    return jsonify({"ok": ok})
+
+
 @app.route("/api/test-sms", methods=["POST"])
 @protected
 def test_sms():
