@@ -17,13 +17,21 @@
   const params = new URLSearchParams(window.location.search);
   const category = params.get("category") || "ALL";
 
-  // Templates allowed per category
+  const CAT_LABELS = {
+    "NO_POLICY": "No Policy",
+    "POS":       "Policy Owner",
+    "SGLW":      "Union Member",
+    "ACTIVE":    "Active Appt",
+  };
+
   const TEMPLATES = {
     "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
     "POS":       ["Will Kit", "Plus Leads"],
     "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
     "ALL":       ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
   };
+
+  let statusPoller = null;
 
   async function load() {
     let leads;
@@ -32,41 +40,38 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       leads = await res.json();
     } catch (err) {
-      console.error("[leads] load failed:", err);
-      document.getElementById("page-content").innerHTML = `<div class="empty" style="color:red">Failed to load leads. Check console (F12).</div>`;
+      document.getElementById("page-content").innerHTML =
+        `<div class="empty" style="color:red">Failed to load leads. Check console (F12).</div>`;
       return;
     }
 
-    const noEmail = leads.filter(l => !l.email).length;
+    const noPhone = leads.filter(l => !l.phone).length;
     const templates = TEMPLATES[category] || TEMPLATES["ALL"];
 
     const rows = leads.map(l => {
-      const missingEmail = !l.email;
-      const missingName = !l.full_name || l.full_name === "Unknown";
-      const missingStatus = !l.policy_status || l.policy_status === "Unknown";
-      const flags = [
-        missingEmail ? "<span class='flag-missing'>No Email</span>" : "",
-        missingName  ? "<span class='flag-missing'>No Name</span>"  : "",
-      ].filter(Boolean).join(" ");
+      const missingPhone = !l.phone;
+      const smsSent = l.msg_sent || 0;
+      const smsCount = l.times_messaged || 0;
 
       return `
-        <tr class="${missingEmail ? 'row-no-email' : ''}">
-          <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}" data-responded="${l.response_received||0}" ${missingEmail ? 'disabled title="No email address"' : ''}/></td>
+        <tr class="${missingPhone ? 'row-no-email' : ''}">
+          <td><input type="checkbox" class="lead-check" data-id="${l.id}" data-category="${l.category}"
+            data-responded="${l.response_received||0}"
+            ${missingPhone ? 'disabled title="No phone number"' : ''}/></td>
           <td>${l.full_name || "<span class='flag-missing'>Missing</span>"}</td>
-          <td>${l.email || "<span class='flag-missing'>Missing</span>"}</td>
-          <td>${l.phone ? `<a href="tel:${l.phone}" class="call-link">📞 ${l.phone}</a>` : "—"}</td>
+          <td>${l.phone ? `<a href="tel:${l.phone}" class="call-link">📞 ${l.phone}</a>` : "<span class='flag-missing'>No Phone</span>"}</td>
+          <td>${l.email || "—"}</td>
           <td>${l.dob || "—"}</td>
-          <td>${l.address ? `${l.address}${l.city ? ', ' + l.city : ''}${l.state ? ', ' + l.state : ''}` : "—"}</td>
+          <td>${l.address ? `${l.address}${l.city ? ', '+l.city : ''}${l.state ? ', '+l.state : ''}` : "—"}</td>
           <td>${l.lead_group || "—"}</td>
           <td>${l.appointment_status || "—"}</td>
-          <td><span class="tag tag-${(l.category||"").toLowerCase()}">${l.category || "—"}</span></td>
+          <td><span class="tag tag-${(l.category||'').toLowerCase()}">${CAT_LABELS[l.category] || l.category || '—'}</span></td>
           <td>${l.policy_status && l.policy_status !== "Unknown" ? l.policy_status : "<span class='flag-missing'>Missing</span>"}</td>
-          <td>${l.email_sent ? `<span class='status-yes'>Sent ×${l.times_emailed||1}</span>` : "<span class='status-no'>No</span>"}</td>
+          <td>${smsSent ? `<span class='status-yes'>Sent ×${smsCount}</span>` : "<span class='status-no'>No</span>"}</td>
           <td>${l.response_received ? "<span class='status-yes'>Yes</span>" : "—"}</td>
-          <td>${flags}</td>
         </tr>
       `;
-    }).join("") || `<tr><td colspan="13" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
+    }).join("") || `<tr><td colspan="12" class="empty">No leads found. Click Sync Portal on the dashboard.</td></tr>`;
 
     document.getElementById("page-content").innerHTML = `
       <div class="page-header">
@@ -75,18 +80,26 @@
           <select id="template-select" class="select-input">
             ${templates.map(t => `<option>${t}</option>`).join("")}
           </select>
-          <button class="btn btn-secondary" onclick="selectEmailable()">Select Emailable</button>
-          <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">Send to Selected</button>
+          <button class="btn btn-secondary" onclick="selectTextable()">Select All with Phone</button>
+          <button class="btn btn-primary" id="send-btn" onclick="sendSelected(this)">📱 Send SMS</button>
         </div>
       </div>
-      ${noEmail ? `<div class="info-bar">${noEmail} lead(s) have no email address and cannot be selected.</div>` : ""}
+      ${noPhone ? `<div class="info-bar">⚠️ ${noPhone} lead(s) have no phone number and cannot receive SMS.</div>` : ""}
+      <div class="category-legend">
+        <span class="tag tag-no_policy">No Policy — send Will Kit / McGruff / Plus Leads</span>
+        <span class="tag tag-pos">Policy Owner — send Will Kit / Plus Leads</span>
+        <span class="tag tag-sglw">Union Member — send Will Kit / McGruff / Plus Leads</span>
+        <span class="tag tag-active">Active Appt — do NOT SMS</span>
+      </div>
+      <div id="sms-log" style="display:none; background:#1a1a2e; color:#00ff88; font-family:monospace; font-size:12px; padding:10px; margin-bottom:10px; border-radius:6px; max-height:150px; overflow-y:auto;"></div>
       <div class="table-wrap">
         <table class="leads-table">
           <thead>
             <tr>
               <th><input type="checkbox" onclick="toggleAll(this)"/></th>
-              <th>Name</th><th>Email</th><th>Phone</th><th>DOB</th><th>Address</th><th>Group</th><th>Appt Status</th>
-              <th>Category</th><th>Policy Status</th><th>Emailed</th><th>Response</th><th>Flags</th>
+              <th>Name</th><th>Phone</th><th>Email</th><th>DOB</th><th>Address</th>
+              <th>Group</th><th>Appt Status</th><th>Category</th><th>Policy Status</th>
+              <th>SMS Sent</th><th>Response</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -99,8 +112,7 @@
     document.querySelectorAll(".lead-check:not(:disabled)").forEach(c => c.checked = cb.checked);
   }
 
-  // Select all leads that have email and are in emailable categories
-  function selectEmailable() {
+  function selectTextable() {
     document.querySelectorAll(".lead-check:not(:disabled)").forEach(c => {
       const cat = c.dataset.category;
       const responded = c.dataset.responded === "1";
@@ -108,19 +120,52 @@
     });
   }
 
+  function startLogPolling() {
+    const logBox = document.getElementById("sms-log");
+    logBox.style.display = "block";
+    let lastLen = 0;
+    statusPoller = setInterval(async () => {
+      try {
+        const res = await apiFetch("/api/status");
+        const data = await res.json();
+        const logs = data.logs || [];
+        if (logs.length > lastLen) {
+          logs.slice(lastLen).forEach(msg => {
+            const line = document.createElement("div");
+            line.textContent = msg;
+            logBox.appendChild(line);
+          });
+          logBox.scrollTop = logBox.scrollHeight;
+          lastLen = logs.length;
+        }
+        document.getElementById("status-bar").textContent = data.message || "Running...";
+        if (!data.running) {
+          clearInterval(statusPoller);
+          document.getElementById("status-bar").textContent = data.message || "Done.";
+          const btn = document.getElementById("send-btn");
+          if (btn) { btn.textContent = "📱 Send SMS"; btn.disabled = false; }
+          load();
+        }
+      } catch (_) {}
+    }, 1500);
+  }
+
   async function sendSelected(btn) {
     const ids = [...document.querySelectorAll(".lead-check:checked")].map(c => parseInt(c.dataset.id));
     if (!ids.length) { alert("Please select at least one lead."); return; }
     const template = document.getElementById("template-select").value;
-    if (!confirm(`Send "${template}" to ${ids.length} lead(s)?`)) return;
+    if (!confirm(`Send "${template}" via SMS to ${ids.length} lead(s)?`)) return;
+
     btn.textContent = "Sending...";
     btn.disabled = true;
-    document.getElementById("status-bar").textContent = `Sending ${template} to ${ids.length} leads...`;
+    document.getElementById("status-bar").textContent = `Sending SMS to ${ids.length} leads...`;
+
     await apiFetch("/api/send", {
       method: "POST",
       body: JSON.stringify({ ids, template })
     });
-    setTimeout(() => { btn.textContent = "Send to Selected"; btn.disabled = false; load(); }, 8000);
+
+    startLogPolling();
   }
 
   load();

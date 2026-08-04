@@ -5,3 +5,4 @@ playwright
 python-dotenv
 pyjwt
 requests
+twilio

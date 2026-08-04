@@ -9,7 +9,7 @@ import logging
 from dotenv import load_dotenv
 from database import init_db, get_connection
 from categorizer import categorize_all_leads, get_leads_by_category
-from emailer import send_bulk_emails, check_replies
+from messenger import send_bulk_messages, check_replies
 from scraper import run_scraper
 from trader import trader
 
@@ -135,7 +135,7 @@ def replies_task(cb):
     cb(f"✅ Found {len(replies)} new replies.")
 
 def send_task(cb, leads, template):
-    sent, failed = send_bulk_emails(leads, template, cb)
+    sent, failed = send_bulk_messages(leads, template, status_callback=cb)
     cb(f"✅ Done! Sent: {sent} | Failed: {failed}")
 
 
@@ -173,7 +173,7 @@ def dashboard():
                 SUM(CASE WHEN category='POS' THEN 1 ELSE 0 END) as pos,
                 SUM(CASE WHEN category='SGLW' THEN 1 ELSE 0 END) as sglw,
                 SUM(CASE WHEN category='ACTIVE' THEN 1 ELSE 0 END) as active,
-                SUM(CASE WHEN email_sent=1 THEN 1 ELSE 0 END) as emailed,
+                SUM(CASE WHEN msg_sent=1 THEN 1 ELSE 0 END) as emailed,
                 SUM(CASE WHEN response_received=1 THEN 1 ELSE 0 END) as responses
             FROM leads
         """)
@@ -356,6 +356,7 @@ def debug():
             "task_message": task_status["message"],
             "turso_url_set": bool(os.getenv("TURSO_DATABASE_URL")),
             "turso_token_set": bool(os.getenv("TURSO_AUTH_TOKEN")),
+            "twilio_set": bool(os.getenv("TWILIO_ACCOUNT_SID")),
             "gmail_set": bool(os.getenv("GMAIL_APP_PASSWORD")),
             "portal_password_set": bool(os.getenv("PORTAL_PASSWORD")),
         }
@@ -372,6 +373,30 @@ def debug():
 def check_replies_route():
     run_task(replies_task)
     return jsonify({"ok": True})
+
+
+@app.route("/api/test-sms", methods=["POST"])
+@protected
+def test_sms():
+    data = request.get_json()
+    to = data.get("to", "")
+    if not to:
+        return jsonify({"ok": False, "message": "Provide a 'to' phone number"}), 400
+    from messenger import send_message, _clean_phone
+    phone = _clean_phone(to)
+    if not phone:
+        return jsonify({"ok": False, "message": f"Invalid phone number: {to}"}), 400
+    try:
+        from twilio.rest import Client
+        client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+        from_num = os.getenv("TWILIO_FROM_NUMBER", "")
+        body = f"Hi! This is a test SMS from Dona's Insurance Tool. Twilio is connected and working ✅"
+        msg = client.messages.create(body=body, from_=from_num, to=phone)
+        log.info(f"[test-sms] Sent to {phone} | SID={msg.sid}")
+        return jsonify({"ok": True, "sid": msg.sid})
+    except Exception as e:
+        log.error(f"[test-sms] Failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/cancel", methods=["POST"])
@@ -394,8 +419,8 @@ def status():
 def responses():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT full_name, email, response_text, date_responded FROM leads WHERE response_received=1")
-    rows = [{"name": r[0], "email": r[1], "text": r[2], "date": r[3]} for r in c.fetchall()]
+    c.execute("SELECT full_name, phone, response_text, date_responded FROM leads WHERE response_received=1")
+    rows = [{"name": r[0], "phone": r[1], "text": r[2], "date": r[3]} for r in c.fetchall()]
     conn.close()
     return jsonify(rows)
 

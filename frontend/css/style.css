@@ -171,6 +171,14 @@ main.with-sidebar {
 .stat-card.grey .stat-number { color: #6b7280; }
 .tag-active { background: #1a1a2e; color: #6b7280; }
 
+.category-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
 /* ── Quick Actions ── */
 .quick-actions {
   padding: 0 28px 28px;

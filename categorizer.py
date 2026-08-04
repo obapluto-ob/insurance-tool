@@ -1,34 +1,52 @@
 from database import get_connection
 
-# Exact Type values from planetaltig.com portal
-TYPE_MAP = {
-    "pos":                                      "POS",
-    "will kit":                                 "NO_POLICY",
-    "mcgruff/childsafe":                        "NO_POLICY",
-    "plus lead":                                "NO_POLICY",
-    "new address:": "NO_POLICY",
-    "union":                                    "SGLW",
-    "appointment status: upcoming appointment": "ACTIVE",
-    "appointment status: no appointment":       "NO_POLICY",
-    "appointment status: past appointment":     "NO_POLICY",
+# Keyword rules — checked in order, first match wins
+# Each entry: (keywords_any_of, category)
+_RULES = [
+    # ACTIVE — has a live upcoming appointment, do not SMS
+    (["upcoming appointment"],                          "ACTIVE"),
+
+    # POS — existing policy owner
+    (["pos", "policy owner", "existing policy",
+      "current policy", "policy holder"],               "POS"),
+
+    # SGLW — union / labour group members
+    (["union", "sglw", "labour", "labor",
+      "guild", "association member", "local "],          "SGLW"),
+
+    # NO_POLICY — no insurance, needs outreach
+    (["will kit", "mcgruff", "childsafe", "child safe",
+      "plus lead", "no policy", "no appointment",
+      "past appointment", "new address",
+      "no insurance", "uninsured"],                     "NO_POLICY"),
+]
+
+# Who can be SMS'd and with what template
+SMSABLE_TEMPLATES = {
+    "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+    "POS":       ["Will Kit", "Plus Leads"],
+    "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
+    # ACTIVE = has upcoming appointment — never SMS
 }
 
-# Who can be emailed and with what template
-EMAILABLE_TEMPLATES = {
-    "NO_POLICY": ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
-    "POS":       ["POS Follow Up", "Will Kit"],
-    "SGLW":      ["Will Kit", "McGruff Child Safe Kit", "Plus Leads"],
-    # ACTIVE = has upcoming appointment — never email
+CATEGORY_LABELS = {
+    "NO_POLICY": "No Policy",
+    "POS":       "Policy Owner",
+    "SGLW":      "Union Member",
+    "ACTIVE":    "Active Appt",
 }
 
 
 def categorize_lead(policy_status: str) -> str:
     status = (policy_status or "").lower().strip()
-    return TYPE_MAP.get(status, "NO_POLICY")
+    for keywords, category in _RULES:
+        if any(kw in status for kw in keywords):
+            return category
+    return "NO_POLICY"  # default — needs outreach
 
 
 def get_allowed_templates(category: str) -> list:
-    return EMAILABLE_TEMPLATES.get(category, [])
+    return SMSABLE_TEMPLATES.get(category, [])
 
 
 def categorize_all_leads(status_callback=None):

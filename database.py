@@ -151,6 +151,19 @@ def init_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS msg_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER,
+            template TEXT,
+            channel TEXT,
+            sid TEXT,
+            status TEXT,
+            error TEXT,
+            date_sent TEXT,
+            FOREIGN KEY(lead_id) REFERENCES leads(id)
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -168,6 +181,11 @@ def init_db():
         ("state",            "TEXT"),
         ("lead_group",       "TEXT"),
         ("appointment_status", "TEXT"),
+        ("msg_sent",       "INTEGER DEFAULT 0"),
+        ("msg_type",       "TEXT"),
+        ("msg_channel",    "TEXT"),
+        ("date_messaged",  "TEXT"),
+        ("times_messaged", "INTEGER DEFAULT 0"),
     ]:
         try:
             ac = get_connection()
