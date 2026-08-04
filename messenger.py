@@ -92,7 +92,9 @@ def send_message(lead: dict, template_name: str, status_callback=None) -> bool:
         client = _twilio_client()
         from_num = os.getenv("TWILIO_FROM_NUMBER", "")
         log.info(f"[SMS] Sending to {lead_name} ({phone}) via {from_num} | template={template_name}")
-        msg = client.messages.create(body=body, from_=from_num, to=phone)
+        # Support both Messaging Service SID (MG...) and raw phone number
+        sender_kwarg = {"messaging_service_sid": from_num} if from_num.startswith("MG") else {"from_": from_num}
+        msg = client.messages.create(body=body, to=phone, **sender_kwarg)
         log.info(f"[SMS] ✅ Delivered to {lead_name} ({phone}) | SID={msg.sid} | Status={msg.status}")
         _record_sent(lead["id"], template_name, msg.sid)
         if status_callback:

@@ -404,13 +404,32 @@ def test_sms():
         from twilio.rest import Client
         client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
         from_num = os.getenv("TWILIO_FROM_NUMBER", "")
-        body = f"Hi! This is a test SMS from Dona's Insurance Tool. Twilio is connected and working ✅"
-        msg = client.messages.create(body=body, from_=from_num, to=phone)
+        body = "Hi! This is a test SMS from Dona's Insurance Tool. Twilio is connected and working ✅"
+        sender_kwarg = {"messaging_service_sid": from_num} if from_num.startswith("MG") else {"from_": from_num}
+        msg = client.messages.create(body=body, to=phone, **sender_kwarg)
         log.info(f"[test-sms] Sent to {phone} | SID={msg.sid}")
         return jsonify({"ok": True, "sid": msg.sid})
     except Exception as e:
         log.error(f"[test-sms] Failed: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/sms-status", methods=["POST"])
+def sms_status():
+    """Twilio status callback webhook — logs delivery updates."""
+    sid    = request.form.get("MessageSid", "")
+    status = request.form.get("MessageStatus", "")
+    to     = request.form.get("To", "")
+    log.info(f"[sms-status] SID={sid} | To={to} | Status={status}")
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("UPDATE msg_log SET status=? WHERE sid=?", (status, sid))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"[sms-status] DB update failed: {e}")
+    return "", 204
 
 
 @app.route("/api/cancel", methods=["POST"])
